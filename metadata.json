@@ -1,0 +1,6 @@
+{
+  "name": "B3-Quant-Free",
+  "description": "Plataforma profissional de análise quantitativa de investimentos na B3. Inclui modelos de Valuation, Fronteira Eficiente, Gerenciador de Alertas, Analisador de Relatórios via IA, Rebalanceador e Matriz de Correlação.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
