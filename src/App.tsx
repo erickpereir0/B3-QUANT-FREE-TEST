@@ -48,7 +48,9 @@ import {
   Paperclip,
   ChevronUp,
   ChevronDown,
-  Filter
+  Filter,
+  Download,
+  Scale
 } from "lucide-react";
 
 import {
@@ -70,10 +72,51 @@ import {
   CustomBarChart,
   EfficientFrontierPlot,
   LiquidationRiskGauge,
-  CumulativeLineGraph
+  CumulativeLineGraph,
+  CustomRadarChart,
+  Stock12mPriceHistoryChart
 } from "./components/Charts";
 
 import { InteractiveMap } from "./components/InteractiveMap";
+
+// Custom premium tooltip component for screener metrics
+const ScreenerMetricLabel: React.FC<{ label: string; tooltip: string; dark?: boolean }> = ({ label, tooltip, dark }) => {
+  return (
+    <div className="flex items-center gap-1 group relative inline-block">
+      <span className={`text-[10px] ${dark ? "text-slate-500" : "text-slate-400"} uppercase font-semibold cursor-help border-b border-dashed border-slate-500/50 hover:text-white transition-colors`}>
+        {label}
+      </span>
+      <div className="absolute bottom-full mb-1.5 left-0 scale-90 origin-bottom opacity-0 group-hover:opacity-100 group-hover:scale-100 transition-all duration-150 pointer-events-none z-50 w-56 bg-[#0e0e0e] border border-white/10 p-2.5 rounded shadow-xl text-left font-mono">
+        <p className="text-[9px] font-bold text-amber-500 uppercase tracking-wider mb-1">{label.replace(/( Mín\.| Máx\.)/g, "")}</p>
+        <p className="text-[10px] text-slate-300 leading-normal font-sans normal-case">{tooltip}</p>
+      </div>
+    </div>
+  );
+};
+
+// UTF-8 CSV exporter utility
+const exportToCsv = (filename: string, header: string[], rows: any[][]) => {
+  const csvContent = "\uFEFF" + [
+    header.join(";"),
+    ...rows.map(e => e.map(val => {
+      let str = String(val === null || val === undefined ? "" : val);
+      if (str.includes(";") || str.includes("\n") || str.includes('"')) {
+        str = '"' + str.replace(/"/g, '""') + '"';
+      }
+      return str;
+    }).join(";"))
+  ].join("\n");
+
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", filename);
+  link.style.visibility = "hidden";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
 
 export default function App() {
   // Navigation State
@@ -85,7 +128,12 @@ export default function App() {
   const [positions, setPositions] = useState(initialStockPositions);
   const [alerts, setAlerts] = useState(initialAlerts);
   const [theses, setTheses] = useState(initialTheses);
+  const [triggeredNotifications, setTriggeredNotifications] = useState<any[]>([
+    { id: "1", message: "Gatilho FII HGLG11: P/VP atingiu 1.01 (Alvo: >= 1.00)", timestamp: "Hoje às 14:32", ticker: "HGLG11" },
+    { id: "2", message: "Gatilho FII VGRI11: Vacância cruzou 19.60% (Alvo: >= 15.00%)", timestamp: "Ontem às 10:15", ticker: "VGRI11" }
+  ]);
   const [newAlert, setNewAlert] = useState({ ticker: "ITUB4", metric: "Price", condition: "Greater than", value: "" });
+  const [tickerHistoryToShow, setTickerHistoryToShow] = useState<string | null>(null);
   const [selectedThesis, setSelectedThesis] = useState(initialTheses[0]);
   const [thesisText, setThesisText] = useState(initialTheses[0].thesisContent);
 
@@ -239,6 +287,76 @@ export default function App() {
   // Manual transaction input state
   const [manualEntry, setManualEntry] = useState({ ticker: "VALE3", type: "BUY", price: "", qty: "" });
 
+  // Add extra loaders, tooltips, compare and presets for screeners
+  const [isStocksFiltering, setIsStocksFiltering] = useState(false);
+  const [isFiisFiltering, setIsFiisFiltering] = useState(false);
+  const [selectedCompareTickers, setSelectedCompareTickers] = useState<string[]>([]);
+  const [showCompareModal, setShowCompareModal] = useState(false);
+
+  const [savedStockFilters, setSavedStockFilters] = useState<Array<{ name: string; filters: any }>>(() => {
+    try {
+      const saved = localStorage.getItem("b3_saved_stock_filters");
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return [
+      {
+        name: "Graham Value Investing",
+        filters: {
+          vBazin: 6.00, vGraham: 22.50, vPeterLynch: 3.00,
+          stockPlMin: 0.00, stockPlMax: 12.00, stockDlEbitdaMin: "", stockDlEbitdaMax: 4.00,
+          stockDyMin: 4.00, stockMostrar: "Todos", stockNetMargin: 12.00, stockRoe: 12.00,
+          stockLiquidity: 500000, selectedSector: "Todos", stockRankMethod: "Graham"
+        }
+      },
+      {
+        name: "Bazin Dividendos Robustos",
+        filters: {
+          vBazin: 6.00, vGraham: 22.50, vPeterLynch: 3.00,
+          stockPlMin: 3.00, stockPlMax: 15.00, stockDlEbitdaMin: "", stockDlEbitdaMax: 5.00,
+          stockDyMin: 8.00, stockMostrar: "Com Dividendos", stockNetMargin: 8.00, stockRoe: 10.00,
+          stockLiquidity: 1000000, selectedSector: "Todos", stockRankMethod: "Bazin"
+        }
+      },
+      {
+        name: "Crescimento Peter Lynch",
+        filters: {
+          vBazin: 6.00, vGraham: 22.50, vPeterLynch: 3.00,
+          stockPlMin: 5.00, stockPlMax: 25.00, stockDlEbitdaMin: "", stockDlEbitdaMax: 3.00,
+          stockDyMin: 2.00, stockMostrar: "Todos", stockNetMargin: 15.00, stockRoe: 15.00,
+          stockLiquidity: 1000000, selectedSector: "Todos", stockRankMethod: "Peter Lynch"
+        }
+      }
+    ];
+  });
+
+  const [savedFiiFilters, setSavedFiiFilters] = useState<Array<{ name: string; filters: any }>>(() => {
+    try {
+      const saved = localStorage.getItem("b3_saved_fii_filters");
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return [
+      {
+        name: "Papel Alto Rendimento",
+        filters: {
+          fiiDyMin: 12.00, fiiLiquidityMin: 500000, fiiVacancyMax: 5.00,
+          fiiVpvMin: 0.70, fiiVpvMax: 1.05, fiiSegment: "Papel CRI", fiiMostrar: "Todos"
+        }
+      },
+      {
+        name: "Tijolo Descontado",
+        filters: {
+          fiiDyMin: 6.00, fiiLiquidityMin: 300000, fiiVacancyMax: 20.00,
+          fiiVpvMin: 0.50, fiiVpvMax: 0.95, fiiSegment: "", fiiMostrar: "Apenas Descontados"
+        }
+      }
+    ];
+  });
+
+  const [newStockFilterName, setNewStockFilterName] = useState("");
+  const [newFiiFilterName, setNewFiiFilterName] = useState("");
+  const [showSaveStockDialog, setShowSaveStockDialog] = useState(false);
+  const [showSaveFiiDialog, setShowSaveFiiDialog] = useState(false);
+
   // Floating Mockup Overlay View for User Reference
   const [showFigmaOverlay, setShowFigmaOverlay] = useState(false);
   const [selectedOverlayImage, setSelectedOverlayImage] = useState<string>("");
@@ -299,6 +417,54 @@ export default function App() {
       telegramBot: true,
       email: false,
     };
+
+    // Evaluate live triggers for FII assets
+    let fired = false;
+    let firedMsg = "";
+    const valInput = parseFloat(newAlert.value);
+    
+    if (newAlert.metric === "P/VP") {
+      const fii = initialScreenerFIIs.find(f => f.ticker === alertItem.ticker);
+      if (fii) {
+        if (alertItem.condition === "Greater than" && fii.vpv >= valInput) {
+          fired = true;
+          firedMsg = `Gatilho FII ${fii.ticker}: P/VP atingiu ${fii.vpv.toFixed(2)} (Alvo: >= ${valInput.toFixed(2)})`;
+        } else if (alertItem.condition === "Less than" && fii.vpv <= valInput) {
+          fired = true;
+          firedMsg = `Gatilho FII ${fii.ticker}: P/VP de ${fii.vpv.toFixed(2)} é menor que seu alvo ${valInput.toFixed(2)}`;
+        } else if (alertItem.condition === "Crosses above" && fii.vpv >= valInput) {
+          fired = true;
+          firedMsg = `Gatilho FII ${fii.ticker}: P/VP cruzou ${valInput.toFixed(2)} (Atual: ${fii.vpv.toFixed(2)})`;
+        }
+      }
+    } else if (newAlert.metric === "Vacancy") {
+      const fii = initialScreenerFIIs.find(f => f.ticker === alertItem.ticker);
+      if (fii) {
+        if (alertItem.condition === "Greater than" && fii.vacancy >= valInput) {
+          fired = true;
+          firedMsg = `Gatilho FII ${fii.ticker}: Vacância atingiu ${fii.vacancy.toFixed(2)}% (Alvo: >= ${valInput.toFixed(2)}%)`;
+        } else if (alertItem.condition === "Less than" && fii.vacancy <= valInput) {
+          fired = true;
+          firedMsg = `Gatilho FII ${fii.ticker}: Vacância de ${fii.vacancy.toFixed(2)}% é menor que o patamar de ${valInput.toFixed(2)}%`;
+        } else if (alertItem.condition === "Crosses above" && fii.vacancy >= valInput) {
+          fired = true;
+          firedMsg = `Gatilho FII ${fii.ticker}: Vacância cruzou ${valInput.toFixed(2)}% (Atual: ${fii.vacancy.toFixed(2)}%)`;
+        }
+      }
+    }
+
+    if (fired) {
+      setTriggeredNotifications(prev => [
+        {
+          id: Date.now().toString() + "-fired",
+          message: firedMsg,
+          timestamp: "Agora mesmo",
+          ticker: alertItem.ticker
+        },
+        ...prev
+      ]);
+    }
+
     setAlerts([alertItem, ...alerts]);
     setNewAlert({ ticker: "ITUB4", metric: "Price", condition: "Greater than", value: "" });
   };
@@ -469,11 +635,226 @@ export default function App() {
     alert(`Tese salvada com sucesso para ${selectedThesis.ticker}!`);
   };
 
+  // CSV EXPORT ACTIONS
+  const handleExportStocksCsv = () => {
+    const header = [
+      "Ticker", "Nome", "Preço (R$)", "Dividend Yield (%)", "P/L", 
+      "Margem Líquida (%)", "ROE (%)", "DL/EBITDA", 
+      "Valuation Bazin", "Valuation Graham", "Valuation Peter Lynch"
+    ];
+    const rows = sortedAndFilteredStocks.map(s => {
+      const bazinVal = (s.price * s.divYield / 100) / (vBazin / 100);
+      const grahamVal = Math.sqrt(vGraham * s.lpa * s.vpa);
+      const lynchVal = ((s.growthRate || 3.0) + s.divYield) / s.pl;
+      return [
+        s.ticker, 
+        s.name, 
+        rFormat(s.price), 
+        s.divYield.toFixed(2) + "%",
+        s.pl.toFixed(2),
+        s.netMargin.toFixed(2) + "%",
+        s.roe.toFixed(2) + "%",
+        s.dlEbitda.toFixed(2),
+        rFormat(bazinVal),
+        grahamVal ? rFormat(grahamVal) : "R$ 0,00",
+        lynchVal.toFixed(2)
+      ];
+    });
+    exportToCsv("b3_screener_acoes_export.csv", header, rows);
+  };
+
+  const handleExportFiisCsv = () => {
+    const header = [
+      "Ticker", "Nome", "Segmento", "Preço (R$)", "Dividend Yield (%)", 
+      "P/VP", "Liquidez Média (R$)", "Quantidade de Imóveis", "Vacância (%)"
+    ];
+    const rows = sortedAndFilteredFIIs.map(f => [
+      f.ticker,
+      f.name,
+      f.segment,
+      rFormat(f.price),
+      f.divYield.toFixed(2) + "%",
+      f.vpv.toFixed(2) + "x",
+      rFormat(f.liquidity),
+      f.propertiesCount,
+      f.vacancy.toFixed(2) + "%"
+    ]);
+    exportToCsv("b3_screener_fiis_export.csv", header, rows);
+  };
+
+  // FILTER PERSISTENCE LOGIC WITH LOCALSTORAGE
+  const handleSaveStockFilter = () => {
+    if (!newStockFilterName.trim()) {
+      alert("Por favor, digite um nome para o filtro.");
+      return;
+    }
+    const currentFiltersObj = {
+      vBazin, vGraham, vPeterLynch,
+      stockPlMin, stockPlMax, stockDlEbitdaMin, stockDlEbitdaMax,
+      stockDyMin, stockMostrar, stockNetMargin, stockRoe,
+      stockLiquidity, selectedSector, stockRankMethod
+    };
+    const updated = [...savedStockFilters, { name: newStockFilterName, filters: currentFiltersObj }];
+    setSavedStockFilters(updated);
+    localStorage.setItem("b3_saved_stock_filters", JSON.stringify(updated));
+    setNewStockFilterName("");
+    setShowSaveStockDialog(false);
+    alert(`Filtro "${newStockFilterName}" salvo com sucesso!`);
+  };
+
+  const handleLoadStockFilter = (name: string) => {
+    const found = savedStockFilters.find(f => f.name === name);
+    if (found) {
+      const f = found.filters;
+      if (f.vBazin !== undefined) setVBazin(f.vBazin);
+      if (f.vGraham !== undefined) setVGraham(f.vGraham);
+      if (f.vPeterLynch !== undefined) setVPeterLynch(f.vPeterLynch);
+      if (f.stockPlMin !== undefined) setStockPlMin(f.stockPlMin);
+      if (f.stockPlMax !== undefined) setStockPlMax(f.stockPlMax);
+      if (f.stockDlEbitdaMin !== undefined) setStockDlEbitdaMin(f.stockDlEbitdaMin);
+      if (f.stockDlEbitdaMax !== undefined) setStockDlEbitdaMax(f.stockDlEbitdaMax);
+      if (f.stockDyMin !== undefined) setStockDyMin(f.stockDyMin);
+      if (f.stockMostrar !== undefined) setStockMostrar(f.stockMostrar);
+      if (f.stockNetMargin !== undefined) setStockNetMargin(f.stockNetMargin);
+      if (f.stockRoe !== undefined) setStockRoe(f.stockRoe);
+      if (f.stockLiquidity !== undefined) setStockLiquidity(f.stockLiquidity);
+      if (f.selectedSector !== undefined) setSelectedSector(f.selectedSector);
+      if (f.stockRankMethod !== undefined) setStockRankMethod(f.stockRankMethod);
+      alert(`Filtro "${name}" carregado!`);
+    }
+  };
+
+  const handleDeleteStockFilter = (name: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const confirmation = confirm(`Deseja realmente remover o filtro "${name}"?`);
+    if (!confirmation) return;
+    const updated = savedStockFilters.filter(f => f.name !== name);
+    setSavedStockFilters(updated);
+    localStorage.setItem("b3_saved_stock_filters", JSON.stringify(updated));
+  };
+
+  const handleSaveFiiFilter = () => {
+    if (!newFiiFilterName.trim()) {
+      alert("Por favor, digite um nome para o filtro.");
+      return;
+    }
+    const currentFiltersObj = {
+      fiiDyMin, fiiLiquidityMin, fiiVacancyMax,
+      fiiVpvMin, fiiVpvMax, fiiSegment, fiiMostrar
+    };
+    const updated = [...savedFiiFilters, { name: newFiiFilterName, filters: currentFiltersObj }];
+    setSavedFiiFilters(updated);
+    localStorage.setItem("b3_saved_fii_filters", JSON.stringify(updated));
+    setNewFiiFilterName("");
+    setShowSaveFiiDialog(false);
+    alert(`Filtro "${newFiiFilterName}" salvo com sucesso!`);
+  };
+
+  const handleLoadFiiFilter = (name: string) => {
+    const found = savedFiiFilters.find(f => f.name === name);
+    if (found) {
+      const f = found.filters;
+      if (f.fiiDyMin !== undefined) setFiiDyMin(f.fiiDyMin);
+      if (f.fiiLiquidityMin !== undefined) setFiiLiquidityMin(f.fiiLiquidityMin);
+      if (f.fiiVacancyMax !== undefined) setFiiVacancyMax(f.fiiVacancyMax);
+      if (f.fiiVpvMin !== undefined) setFiiVpvMin(f.fiiVpvMin);
+      if (f.fiiVpvMax !== undefined) setFiiVpvMax(f.fiiVpvMax);
+      if (f.fiiSegment !== undefined) setFiiSegment(f.fiiSegment);
+      if (f.fiiMostrar !== undefined) setFiiMostrar(f.fiiMostrar);
+      alert(`Filtro "${name}" carregado!`);
+    }
+  };
+
+  const handleDeleteFiiFilter = (name: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const confirmation = confirm(`Deseja realmente remover o filtro "${name}"?`);
+    if (!confirmation) return;
+    const updated = savedFiiFilters.filter(f => f.name !== name);
+    setSavedFiiFilters(updated);
+    localStorage.setItem("b3_saved_fii_filters", JSON.stringify(updated));
+  };
+
   // Sector calculations for asset breakdown donut
   const totalNetWorth = positions.reduce((sum, p) => sum + p.totalValue, 0);
 
   // Format currencies helper
   const rFormat = (num: number) => num.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+  // Computed Filtered Stocks List (Drives Count, Search, Table and Comparison render)
+  const sortedAndFilteredStocks = React.useMemo(() => {
+    return initialScreenerStocks
+      .filter((s) => {
+        const matchesSector = selectedSector === "Todos" || s.sector === selectedSector;
+        const matchesPl = s.pl >= stockPlMin && s.pl <= stockPlMax;
+        const matchesDy = s.divYield >= stockDyMin;
+        const matchesNetMargin = s.netMargin >= stockNetMargin;
+        const matchesRoe = s.roe >= stockRoe;
+        const matchesLiquidity = s.liquidity >= stockLiquidity;
+        const matchFavorites = !showOnlyFavorites || favoriteTickers.includes(s.ticker);
+        const matchesSearch = !stockSearch.trim() || s.ticker.toLowerCase().includes(stockSearch.toLowerCase()) || s.name.toLowerCase().includes(stockSearch.toLowerCase());
+        
+        let matchesDlE = s.dlEbitda <= stockDlEbitdaMax;
+        if (stockDlEbitdaMin !== "") matchesDlE = matchesDlE && s.dlEbitda >= Number(stockDlEbitdaMin);
+
+        return matchesSector && matchesPl && matchesDy && matchesNetMargin && matchesRoe && matchesLiquidity && matchFavorites && matchesSearch && matchesDlE;
+      })
+      .sort((a, b) => {
+        if (stockRankMethod === "Bazin") {
+          const valA = (a.price * a.divYield / 100) / (vBazin / 100);
+          const valB = (b.price * b.divYield / 100) / (vBazin / 100);
+          return valB - valA;
+        } else if (stockRankMethod === "Graham") {
+          const valA = Math.sqrt(vGraham * a.lpa * a.vpa);
+          const valB = Math.sqrt(vGraham * b.lpa * b.vpa);
+          return valB - valA;
+        } else if (stockRankMethod === "Peter Lynch") {
+          const valA = ((a.growthRate || 3.0) + a.divYield) / a.pl;
+          const valB = ((b.growthRate || 3.0) + b.divYield) / b.pl;
+          return valB - valA;
+        } else if (stockRankMethod === "Performance 12m") {
+          const valA = (a as any).var12m ?? 0;
+          const valB = (b as any).var12m ?? 0;
+          return valB - valA;
+        } else {
+          // Rank GD or Joel
+          const valA = (a.roe + a.netMargin) / a.pl;
+          const valB = (b.roe + b.netMargin) / b.pl;
+          return valB - valA;
+        }
+      });
+  }, [
+    selectedSector, stockPlMin, stockPlMax, stockDyMin, stockNetMargin, stockRoe,
+    stockLiquidity, showOnlyFavorites, favoriteTickers, stockSearch, stockDlEbitdaMin,
+    stockDlEbitdaMax, stockRankMethod, vBazin, vGraham, vPeterLynch
+  ]);
+
+  // Computed Filtered FIIs List
+  const sortedAndFilteredFIIs = React.useMemo(() => {
+    return initialScreenerFIIs
+      .filter((f) => {
+        const matchesDy = f.divYield >= fiiDyMin;
+        const matchesLiquidity = f.liquidity >= fiiLiquidityMin;
+        const matchesVacancy = f.vacancy <= fiiVacancyMax;
+        const matchesVpv = f.vpv >= fiiVpvMin && f.vpv <= fiiVpvMax;
+        const matchesSegment = !fiiSegment || f.segment === fiiSegment;
+        
+        let matchesMostrar = true;
+        if (fiiMostrar === "Método 2em1") {
+          matchesMostrar = f.vpv < 1.00 && f.divYield >= 8.5;
+        } else if (fiiMostrar === "Apenas Descontados") {
+          matchesMostrar = f.vpv < 1.00;
+        }
+        
+        const matchesSearch = !fiiSearch.trim() || f.ticker.toLowerCase().includes(fiiSearch.toLowerCase());
+        const matchesFav = !showOnlyFavorites || favoriteTickers.includes(f.ticker);
+        
+        return matchesDy && matchesLiquidity && matchesVacancy && matchesVpv && matchesSegment && matchesMostrar && matchesSearch && matchesFav;
+      })
+      .sort((a, b) => b.divYield - a.divYield);
+  }, [
+    fiiDyMin, fiiLiquidityMin, fiiVacancyMax, fiiVpvMin, fiiVpvMax, fiiSegment,
+    fiiMostrar, fiiSearch, showOnlyFavorites, favoriteTickers
+  ]);
 
   return (
     <div className="min-h-screen bg-black text-white font-sans antialiased overflow-x-hidden flex flex-col justify-between">
@@ -2594,7 +2975,7 @@ export default function App() {
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Taxas de valuation</span>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="flex flex-col gap-1 bg-black border border-white/5 p-2 rounded-lg">
-                    <label className="text-[10px] text-slate-400 uppercase font-semibold">Taxa Bazin</label>
+                    <ScreenerMetricLabel label="Taxa Bazin" tooltip="Estima o preço teto para obter rendimento projetado com base em proventos históricos (Método de Décio Bazin)." />
                     <input
                       type="number"
                       step="0.1"
@@ -2604,7 +2985,7 @@ export default function App() {
                     />
                   </div>
                   <div className="flex flex-col gap-1 bg-black border border-white/5 p-2 rounded-lg">
-                    <label className="text-[10px] text-slate-400 uppercase font-semibold">Taxa Graham</label>
+                    <ScreenerMetricLabel label="Taxa Graham" tooltip="Estima o valor justo teórico intrínseco baseado no lucro (LPA) e valor patrimonial (VPA) com multiplicador limite de 22.5." />
                     <input
                       type="number"
                       step="0.1"
@@ -2614,7 +2995,7 @@ export default function App() {
                     />
                   </div>
                   <div className="flex flex-col gap-1 bg-black border border-white/5 p-2 rounded-lg">
-                    <label className="text-[10px] text-slate-400 uppercase font-semibold">Taxa Peter Lynch</label>
+                    <ScreenerMetricLabel label="Taxa Peter Lynch" tooltip="Preço teto que avalia se a ação está barata considerando crescimento de lucros e dividendos relativos ao P/L." />
                     <input
                       type="number"
                       step="0.1"
@@ -2629,7 +3010,7 @@ export default function App() {
               {/* 2. Filtros principais de Ações */}
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-5">
                 <div className="flex flex-col gap-1 bg-black border border-white/5 p-2 rounded-lg">
-                  <label className="text-[10px] text-slate-400 uppercase font-semibold">P/L Mín.</label>
+                  <ScreenerMetricLabel label="P/L Mín." tooltip="Limite mínimo para a relação entre Preço e Lucro por Ação. Evita distorções de lucro negativo." />
                   <input
                     type="number"
                     step="0.5"
@@ -2639,7 +3020,7 @@ export default function App() {
                   />
                 </div>
                 <div className="flex flex-col gap-1 bg-black border border-white/5 p-2 rounded-lg">
-                  <label className="text-[10px] text-slate-400 uppercase font-semibold">P/L Máx.</label>
+                  <ScreenerMetricLabel label="P/L Máx." tooltip="Limite máximo de Preço/Lucro. Evita comprar empresas caras em relação à capacidade atual de gerar lucro." />
                   <input
                     type="number"
                     step="0.5"
@@ -2649,7 +3030,7 @@ export default function App() {
                   />
                 </div>
                 <div className="flex flex-col gap-1 bg-black border border-white/5 p-2 rounded-lg">
-                  <label className="text-[10px] text-slate-400 uppercase font-semibold">DL/EBITDA Mín.</label>
+                  <ScreenerMetricLabel label="DL/EBITDA Mín." tooltip="Limite mínimo de endividamento operacional (Dívida Líquida / EBITDA)." />
                   <input
                     type="text"
                     placeholder="DL/EBITDA Mínimo"
@@ -2659,7 +3040,7 @@ export default function App() {
                   />
                 </div>
                 <div className="flex flex-col gap-1 bg-black border border-white/5 p-2 rounded-lg">
-                  <label className="text-[10px] text-slate-400 uppercase font-semibold">DL/EBITDA Máx.</label>
+                  <ScreenerMetricLabel label="DL/EBITDA Máx." tooltip="Teto aceitável de endividamento da empresa medido em múltiplos de geração de caixa operacional anual (EBITDA)." />
                   <input
                     type="number"
                     step="0.5"
@@ -2669,7 +3050,7 @@ export default function App() {
                   />
                 </div>
                 <div className="flex flex-col gap-1 bg-black border border-white/5 p-2 rounded-lg">
-                  <label className="text-[10px] text-slate-400 uppercase font-semibold">Dividend Yield Mín.</label>
+                  <ScreenerMetricLabel label="Dividend Yield Mín." tooltip="A taxa percentual mínima de retorno em dividendos em relação à cotação atual da ação nos últimos 12 meses." />
                   <input
                     type="number"
                     step="0.5"
@@ -2679,7 +3060,7 @@ export default function App() {
                   />
                 </div>
                 <div className="flex flex-col gap-1 bg-black border border-white/5 p-2 rounded-lg">
-                  <label className="text-[10px] text-slate-400 uppercase font-semibold">Mostrar</label>
+                  <ScreenerMetricLabel label="Mostrar" tooltip="Permite filtrar e exibir de forma segmentada apenas certos perfis de empresas selecionados secundariamente." />
                   <select
                     value={stockMostrar}
                     onChange={(e) => setStockMostrar(e.target.value)}
@@ -2707,7 +3088,7 @@ export default function App() {
               {stockExtraExpanded && (
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6 p-4 bg-white/[0.02] border border-white/5 rounded-lg select-none">
                   <div className="flex flex-col gap-1 bg-black/60 border border-white/5 p-2 rounded-lg">
-                    <label className="text-[10px] text-slate-500 uppercase font-semibold">Margem Líquida (%)</label>
+                    <ScreenerMetricLabel label="Margem Líquida (%)" tooltip="Percentual de cada real de receita que sobra como lucro líquido após todas as despesas e impostos operacionais." dark={true} />
                     <input
                       type="number"
                       step="0.5"
@@ -2717,7 +3098,7 @@ export default function App() {
                     />
                   </div>
                   <div className="flex flex-col gap-1 bg-black/60 border border-white/5 p-2 rounded-lg">
-                    <label className="text-[10px] text-slate-500 uppercase font-semibold">ROE (%)</label>
+                    <ScreenerMetricLabel label="ROE (%)" tooltip="Retorno sobre o Patrimônio Líquido. Mede a eficiência no uso do capital próprio para gerar lucros reais." dark={true} />
                     <input
                       type="number"
                       step="0.5"
@@ -2727,7 +3108,7 @@ export default function App() {
                     />
                   </div>
                   <div className="flex flex-col gap-1 bg-black/60 border border-white/5 p-2 rounded-lg">
-                    <label className="text-[10px] text-slate-500 uppercase font-semibold">Liquidez Mín. (R$)</label>
+                    <ScreenerMetricLabel label="Liquidez Mín. (R$)" tooltip="Média diária negociada na bolsa. Garante facilidade para entrar ou sair de posições volumosas." dark={true} />
                     <input
                       type="number"
                       step="100000"
@@ -2741,17 +3122,40 @@ export default function App() {
 
               {/* 5. Action Row with Filtering and Rank selectors */}
               <div className="flex flex-wrap items-center justify-between gap-4 mb-6 p-1">
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                   <button
-                    onClick={() => {}}
+                    onClick={() => {
+                      setIsStocksFiltering(true);
+                      setTimeout(() => setIsStocksFiltering(false), 700);
+                    }}
                     className="bg-[#0284c7] hover:bg-sky-600 text-white font-sans text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-2 transition-colors cursor-pointer"
                   >
                     <Filter className="w-3.5 h-3.5" />
                     <span>Filtrar</span>
                   </button>
                   
-                  <div className="bg-[#111] hover:bg-white/5 border border-white/10 rounded-lg p-2 text-slate-300 transition-all cursor-pointer">
-                    <Save className="w-3.5 h-3.5" />
+                  {/* Save current filters */}
+                  <div className="flex items-center gap-1 bg-[#111] border border-white/10 rounded-lg px-2 py-1 text-slate-300">
+                    <span className="text-[9px] uppercase px-1 text-slate-500 font-bold">Filtros Salvos</span>
+                    <select
+                      onChange={(e) => {
+                        if (e.target.value) handleLoadStockFilter(e.target.value);
+                      }}
+                      className="bg-transparent border-none text-white text-[11px] outline-none cursor-pointer focus:ring-0 py-0.5 font-sans max-w-[120px]"
+                      value=""
+                    >
+                      <option value="">Selecione...</option>
+                      {savedStockFilters.map(f => (
+                        <option key={f.name} value={f.name} className="bg-[#111]">{f.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => setShowSaveStockDialog(true)}
+                      className="text-emerald-400 hover:text-emerald-300 p-1 hover:bg-white/5 rounded transition-all"
+                      title="Salvar Filtro Atual"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                   
                   <button
@@ -2759,7 +3163,7 @@ export default function App() {
                     className="bg-transparent hover:bg-white/5 border border-white/10 text-slate-400 hover:text-white font-sans text-xs px-3.5 py-2 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
-                    <span>Reiniciar filtros</span>
+                    <span>Reiniciar</span>
                   </button>
 
                   <select
@@ -2772,28 +3176,22 @@ export default function App() {
                     <option value="Graham">Valoration Graham</option>
                     <option value="Peter Lynch">Valoration Peter Lynch</option>
                     <option value="Joel">Valoration Joel</option>
+                    <option value="Performance 12m">Performance 12m</option>
                   </select>
+
+                  <button
+                    onClick={handleExportStocksCsv}
+                    className="bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 border border-emerald-500/20 font-sans text-xs px-3 py-2 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer"
+                    title="Exportar dados para CSV"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Exportar CSV</span>
+                  </button>
                 </div>
 
                 {/* Quantitative results summary counter */}
                 <span className="text-xs text-slate-400 font-sans tracking-wide">
-                  Mostrando <strong className="text-[#0284c7] font-extrabold">{
-                    initialScreenerStocks.filter((s) => {
-                      const matchesSector = selectedSector === "Todos" || s.sector === selectedSector;
-                      const matchesPl = s.pl >= stockPlMin && s.pl <= stockPlMax;
-                      const matchesDy = s.divYield >= stockDyMin;
-                      const matchesNetMargin = s.netMargin >= stockNetMargin;
-                      const matchesRoe = s.roe >= stockRoe;
-                      const matchesLiquidity = s.liquidity >= stockLiquidity;
-                      const matchFavorites = !showOnlyFavorites || favoriteTickers.includes(s.ticker);
-                      const matchesSearch = !stockSearch.trim() || s.ticker.toLowerCase().includes(stockSearch.toLowerCase()) || s.name.toLowerCase().includes(stockSearch.toLowerCase());
-                      
-                      let matchesDlE = s.dlEbitda <= stockDlEbitdaMax;
-                      if (stockDlEbitdaMin !== "") matchesDlE = matchesDlE && s.dlEbitda >= Number(stockDlEbitdaMin);
-
-                      return matchesSector && matchesPl && matchesDy && matchesNetMargin && matchesRoe && matchesLiquidity && matchFavorites && matchesSearch && matchesDlE;
-                    }).length
-                  }</strong> de <strong className="text-white font-bold">{initialScreenerStocks.length}</strong> Ações
+                  Mostrando <strong className="text-[#0284c7] font-extrabold">{sortedAndFilteredStocks.length}</strong> de <strong className="text-white font-bold">{initialScreenerStocks.length}</strong> Ações
                 </span>
               </div>
 
@@ -2815,9 +3213,11 @@ export default function App() {
                   <thead>
                     <tr className="border-b border-white/10 text-slate-400 bg-white/5 select-none">
                       <th className="py-3 px-3 w-10 text-center">Fav</th>
+                      <th className="py-3 px-3 w-10 text-center text-orange-400" title="Selecionar para comparação direta Lado a Lado">Comp</th>
                       <th className="py-3 px-1">Rank</th>
                       <th className="py-3 px-2">Ticker</th>
                       <th className="py-3 px-2 text-right">Cotação</th>
+                      <th className="py-3 px-2 text-right text-cyan-400 font-bold" title="Variação de Preço nos últimos 12 meses">Var. 12m</th>
                       <th className="py-3 px-2 text-right">Dividend Yield</th>
                       <th className="py-3 px-2 text-right">P/L</th>
                       <th className="py-3 px-2 text-right">Margem Líquida</th>
@@ -2840,43 +3240,40 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-                    {initialScreenerStocks
-                      .filter((s) => {
-                        const matchesSector = selectedSector === "Todos" || s.sector === selectedSector;
-                        const matchesPl = s.pl >= stockPlMin && s.pl <= stockPlMax;
-                        const matchesDy = s.divYield >= stockDyMin;
-                        const matchesNetMargin = s.netMargin >= stockNetMargin;
-                        const matchesRoe = s.roe >= stockRoe;
-                        const matchesLiquidity = s.liquidity >= stockLiquidity;
-                        const matchFavorites = !showOnlyFavorites || favoriteTickers.includes(s.ticker);
-                        const matchesSearch = !stockSearch.trim() || s.ticker.toLowerCase().includes(stockSearch.toLowerCase()) || s.name.toLowerCase().includes(stockSearch.toLowerCase());
-                        
-                        let matchesDlE = s.dlEbitda <= stockDlEbitdaMax;
-                        if (stockDlEbitdaMin !== "") matchesDlE = matchesDlE && s.dlEbitda >= Number(stockDlEbitdaMin);
-
-                        return matchesSector && matchesPl && matchesDy && matchesNetMargin && matchesRoe && matchesLiquidity && matchFavorites && matchesSearch && matchesDlE;
-                      })
-                      .sort((a, b) => {
-                        if (stockRankMethod === "Bazin") {
-                          const valA = (a.price * a.divYield / 100) / (vBazin / 100);
-                          const valB = (b.price * b.divYield / 100) / (vBazin / 100);
-                          return valB - valA;
-                        } else if (stockRankMethod === "Graham") {
-                          const valA = Math.sqrt(vGraham * a.lpa * a.vpa);
-                          const valB = Math.sqrt(vGraham * b.lpa * b.vpa);
-                          return valB - valA;
-                        } else if (stockRankMethod === "Peter Lynch") {
-                          const valA = ((a.growthRate || 3.0) + a.divYield) / a.pl;
-                          const valB = ((b.growthRate || 3.0) + b.divYield) / b.pl;
-                          return valB - valA;
-                        } else {
-                          // Rank GD or Joel
-                          const valA = (a.roe + a.netMargin) / a.pl;
-                          const valB = (b.roe + b.netMargin) / b.pl;
-                          return valB - valA;
-                        }
-                      })
-                      .map((s, idx) => {
+                    {isStocksFiltering ? (
+                      Array.from({ length: 5 }).map((_, i) => (
+                        <tr key={`sk-${i}`} className="animate-pulse bg-white/[0.01]">
+                          <td className="py-4 px-3"><div className="h-3.5 w-3.5 bg-white/10 rounded mx-auto"></div></td>
+                          <td className="py-4 px-3"><div className="h-3.5 w-3.5 bg-white/10 rounded mx-auto"></div></td>
+                          <td className="py-4 px-1"><div className="h-3.5 w-6 bg-white/10 rounded"></div></td>
+                          <td className="py-4 px-2 flex items-center gap-2">
+                            <div className="w-5 h-5 rounded-full bg-white/10"></div>
+                            <div className="flex flex-col gap-1">
+                              <div className="h-3 w-10 bg-white/10 rounded"></div>
+                              <div className="h-2 w-14 bg-white/10 rounded"></div>
+                            </div>
+                          </td>
+                          <td className="py-4 px-2 text-right"><div className="h-3 w-12 bg-white/10 rounded ml-auto"></div></td>
+                          <td className="py-4 px-2 text-right"><div className="h-3 w-10 bg-white/10 rounded ml-auto"></div></td>
+                          <td className="py-4 px-2 text-right"><div className="h-3 w-10 bg-white/10 rounded ml-auto"></div></td>
+                          <td className="py-4 px-2 text-right"><div className="h-3 w-8 bg-white/10 rounded ml-auto"></div></td>
+                          <td className="py-4 px-2 text-right"><div className="h-3 w-12 bg-white/10 rounded ml-auto"></div></td>
+                          <td className="py-4 px-2 text-right"><div className="h-3 w-12 bg-white/10 rounded ml-auto"></div></td>
+                          <td className="py-4 px-2 text-right"><div className="h-3 w-8 bg-white/10 rounded ml-auto"></div></td>
+                          <td className="py-4 px-3 bg-amber-500/5 border-l border-white/5"><div className="h-3.5 w-16 bg-white/10 rounded mx-auto"></div></td>
+                          <td className="py-4 px-3 bg-blue-500/5 border-l border-white/5"><div className="h-3.5 w-16 bg-white/10 rounded mx-auto"></div></td>
+                          <td className="py-4 px-3 bg-purple-500/5 border-l border-white/5"><div className="h-3.5 w-16 bg-white/10 rounded mx-auto"></div></td>
+                          <td className="py-4 px-3 bg-rose-500/5 border-l border border-r border-white/5"><div className="h-3.5 w-16 bg-[#fff5f5]/10 rounded mx-auto"></div></td>
+                        </tr>
+                      ))
+                    ) : sortedAndFilteredStocks.length === 0 ? (
+                      <tr>
+                        <td colSpan={15} className="py-8 text-center text-slate-500 font-sans">
+                          Nenhuma ação encontrada para os filtros atuais.
+                        </td>
+                      </tr>
+                    ) : (
+                      sortedAndFilteredStocks.map((s, idx) => {
                         const isFav = favoriteTickers.includes(s.ticker);
                         
                         // Compute calculations dynamically for live response
@@ -2901,6 +3298,22 @@ export default function App() {
                                 <Star className={`w-4 h-4 mx-auto ${isFav ? "fill-amber-400 text-amber-400" : "text-slate-600 hover:text-amber-500"}`} />
                               </button>
                             </td>
+
+                            <td className="py-2 px-3 text-center">
+                              <input
+                                type="checkbox"
+                                checked={selectedCompareTickers.includes(s.ticker)}
+                                disabled={!selectedCompareTickers.includes(s.ticker) && selectedCompareTickers.length >= 3}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedCompareTickers(prev => [...prev, s.ticker]);
+                                  } else {
+                                    setSelectedCompareTickers(prev => prev.filter(t => t !== s.ticker));
+                                  }
+                                }}
+                                className="rounded-sm bg-black border-white/20 text-[#a855f7] focus:ring-0 cursor-pointer"
+                              />
+                            </td>
                             
                             <td className="py-3 px-1 text-slate-400 font-sans">
                               #{idx + 1}
@@ -2917,6 +3330,9 @@ export default function App() {
                             </td>
 
                             <td className="py-3 px-2 text-right font-bold text-white font-mono">{rFormat(s.price)}</td>
+                            <td className={`py-3 px-2 text-right font-mono font-bold ${((s as any).var12m || 0) >= 0 ? "text-emerald-400" : "text-rose-500"}`}>
+                              {((s as any).var12m || 0) >= 0 ? "+" : ""}{((s as any).var12m || 0).toFixed(2)}%
+                            </td>
                             <td className="py-3 px-2 text-right text-emerald-400 font-mono font-bold">{s.divYield.toFixed(2)}%</td>
                             <td className="py-3 px-2 text-right text-orange-500 font-mono">{s.pl.toFixed(2)}</td>
                             <td className="py-3 px-2 text-right text-slate-300 font-mono">{s.netMargin.toFixed(2)}%</td>
@@ -2924,11 +3340,43 @@ export default function App() {
                             <td className="py-3 px-2 text-right text-slate-300 font-mono">{s.dlEbitda.toFixed(2)}</td>
                             
                             {/* Calculation cell highlights matching the image color tones */}
-                            <td className="py-3 px-3 text-center font-bold text-amber-300 bg-amber-500/5 font-mono border-l border-white/5">
-                              {rFormat(bazinVal)}
+                            <td className="py-3 px-3 text-center bg-amber-500/5 border-l border-white/5">
+                              <span className="font-bold text-amber-300 font-mono">{rFormat(bazinVal)}</span>
+                              {(() => {
+                                const bazinSafety = bazinVal > 0 ? ((bazinVal - s.price) / bazinVal) * 100 : 0;
+                                return (
+                                  <div className="mt-1 w-24 mx-auto flex flex-col gap-0.5">
+                                    <div className="h-1 w-full bg-white/10 rounded-full overflow-hidden relative">
+                                      <div 
+                                        className={`h-full rounded-full transition-all duration-300 ${bazinSafety > 0 ? "bg-emerald-500" : "bg-rose-500"}`}
+                                        style={{ width: `${Math.max(2, Math.min(Math.abs(bazinSafety), 100))}%` }}
+                                      />
+                                    </div>
+                                    <span className={`text-[8.5px] font-mono block leading-none text-center ${bazinSafety > 0 ? "text-emerald-400 font-bold" : "text-rose-400"}`}>
+                                      MS: {bazinSafety > 0 ? "+" : ""}{bazinSafety.toFixed(0)}%
+                                    </span>
+                                  </div>
+                                );
+                              })()}
                             </td>
-                            <td className="py-3 px-3 text-center font-bold text-blue-300 bg-blue-500/5 font-mono border-l border-white/5">
-                              {grahamVal ? rFormat(grahamVal) : "R$ 0,00"}
+                            <td className="py-3 px-3 text-center bg-blue-500/5 border-l border-white/5">
+                              <span className="font-bold text-blue-300 font-mono">{grahamVal ? rFormat(grahamVal) : "R$ 0,00"}</span>
+                              {(() => {
+                                const grahamSafety = grahamVal > 0 ? ((grahamVal - s.price) / grahamVal) * 100 : 0;
+                                return (
+                                  <div className="mt-1 w-24 mx-auto flex flex-col gap-0.5">
+                                    <div className="h-1 w-full bg-white/10 rounded-full overflow-hidden relative">
+                                      <div 
+                                        className={`h-full rounded-full transition-all duration-300 ${grahamSafety > 0 ? "bg-emerald-500" : "bg-rose-500"}`}
+                                        style={{ width: `${Math.max(2, Math.min(Math.abs(grahamSafety), 100))}%` }}
+                                      />
+                                    </div>
+                                    <span className={`text-[8.5px] font-mono block leading-none text-center ${grahamSafety > 0 ? "text-emerald-400 font-bold" : "text-rose-400"}`}>
+                                      MS: {grahamSafety > 0 ? "+" : ""}{grahamSafety.toFixed(0)}%
+                                    </span>
+                                  </div>
+                                );
+                              })()}
                             </td>
                             <td className="py-3 px-3 text-center font-bold text-purple-300 bg-purple-500/5 font-mono border-l border-white/5">
                               {lynchVal.toFixed(2)}
@@ -2938,7 +3386,8 @@ export default function App() {
                             </td>
                           </tr>
                         );
-                      })}
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -2981,7 +3430,7 @@ export default function App() {
               {/* FII Filtering Form (Aligned with Image 2) */}
               <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-5">
                 <div className="flex flex-col gap-1 bg-black border border-white/5 p-2 rounded-lg">
-                  <label className="text-[10px] text-slate-400 uppercase font-semibold">Dividend Yield Mín.</label>
+                  <ScreenerMetricLabel label="Dividend Yield Mín." tooltip="A taxa de retorno anual esperada em proventos pagos pelo Fundo Imobiliário nos últimos 12 meses." />
                   <div className="flex items-center gap-1">
                     <input
                       type="number"
@@ -2995,7 +3444,7 @@ export default function App() {
                 </div>
 
                 <div className="flex flex-col gap-1 bg-black border border-white/5 p-2 rounded-lg">
-                  <label className="text-[10px] text-slate-400 uppercase font-semibold">Liquidez Mín.</label>
+                  <ScreenerMetricLabel label="Liquidez Mín." tooltip="Volume financeiro mínimo negociado por dia útil na Bolsa. Garante facilidade para negociações sem spread alto." />
                   <div className="flex items-center gap-1">
                     <span className="text-[9px] text-slate-500 font-sans">R$</span>
                     <input
@@ -3009,7 +3458,7 @@ export default function App() {
                 </div>
 
                 <div className="flex flex-col gap-1 bg-black border border-white/5 p-2 rounded-lg">
-                  <label className="text-[10px] text-slate-400 uppercase font-semibold">Vacância Máx.</label>
+                  <ScreenerMetricLabel label="Vacância Máx." tooltip="Percentual máximo aceitável de espaço não locado (vago) nos imóveis (portfólio físico) do Fundo Imobiliário." />
                   <div className="flex items-center gap-1">
                     <input
                       type="number"
@@ -3023,7 +3472,7 @@ export default function App() {
                 </div>
 
                 <div className="flex flex-col gap-1 bg-black border border-white/5 p-2 rounded-lg">
-                  <label className="text-[10px] text-slate-400 uppercase font-semibold">P/VP Mín.</label>
+                  <ScreenerMetricLabel label="P/VP Mín." tooltip="Limite mínimo de Preço sobre Valor Patrimonial. Pode sinalizar fundos extremamente baratos ou com problemas graves." />
                   <input
                     type="number"
                     step="0.05"
@@ -3034,7 +3483,7 @@ export default function App() {
                 </div>
 
                 <div className="flex flex-col gap-1 bg-black border border-white/5 p-2 rounded-lg">
-                  <label className="text-[10px] text-slate-400 uppercase font-semibold">P/VP Máx.</label>
+                  <ScreenerMetricLabel label="P/VP Máx." tooltip="Limite máximo do indicador Preço sobre Valor Patrimonial para evitar pagar caro em ágios desproporcionais." />
                   <input
                     type="number"
                     step="0.05"
@@ -3048,7 +3497,7 @@ export default function App() {
               {/* Secondary row for select segments & dropdown options */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
                 <div className="flex flex-col gap-1 bg-black border border-white/5 p-2 rounded-lg">
-                  <label className="text-[10px] text-slate-400 uppercase font-semibold">Segmento</label>
+                  <ScreenerMetricLabel label="Segmento" tooltip="Especialidade do portfólio de imóveis ou recebíveis (Lajes Corporativas, Papel CRI, Logística, Shoppings, etc.)." />
                   <select
                     value={fiiSegment}
                     onChange={(e) => setFiiSegment(e.target.value)}
@@ -3065,7 +3514,7 @@ export default function App() {
                 </div>
 
                 <div className="flex flex-col gap-1 bg-black border border-white/5 p-2 rounded-lg">
-                  <label className="text-[10px] text-slate-400 uppercase font-semibold">Mostrar</label>
+                  <ScreenerMetricLabel label="Mostrar" tooltip="Filtros predefinidos rápidos (como Método 2em1 de dividendos altos com desconto patrimonial P/VP < 1.00)." />
                   <select
                     value={fiiMostrar}
                     onChange={(e) => setFiiMostrar(e.target.value)}
@@ -3080,17 +3529,40 @@ export default function App() {
 
               {/* Actions Row */}
               <div className="flex flex-wrap items-center justify-between gap-4 mb-6 p-1">
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                   <button
-                    onClick={() => {}}
+                    onClick={() => {
+                      setIsFiisFiltering(true);
+                      setTimeout(() => setIsFiisFiltering(false), 700);
+                    }}
                     className="bg-[#0284c7] hover:bg-sky-600 text-white font-sans text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-2 transition-colors cursor-pointer"
                   >
                     <Filter className="w-3.5 h-3.5" />
                     <span>Filtrar</span>
                   </button>
                   
-                  <div className="bg-[#111] hover:bg-white/5 border border-white/10 rounded-lg p-2 text-slate-300 transition-all cursor-pointer">
-                    <Save className="w-3.5 h-3.5" />
+                  {/* Save current filters */}
+                  <div className="flex items-center gap-1 bg-[#111] border border-white/10 rounded-lg px-2 py-1 text-slate-300">
+                    <span className="text-[9px] uppercase px-1 text-slate-500 font-bold">Filtros Salvos</span>
+                    <select
+                      onChange={(e) => {
+                        if (e.target.value) handleLoadFiiFilter(e.target.value);
+                      }}
+                      className="bg-transparent border-none text-white text-[11px] outline-none cursor-pointer focus:ring-0 py-0.5 font-sans max-w-[120px]"
+                      value=""
+                    >
+                      <option value="">Selecione...</option>
+                      {savedFiiFilters.map(f => (
+                        <option key={f.name} value={f.name} className="bg-[#111]">{f.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => setShowSaveFiiDialog(true)}
+                      className="text-purple-400 hover:text-purple-300 p-1 hover:bg-white/5 rounded transition-all"
+                      title="Salvar Filtro de FII Atual"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                   
                   <button
@@ -3098,33 +3570,22 @@ export default function App() {
                     className="bg-transparent hover:bg-white/5 border border-white/10 text-slate-400 hover:text-white font-sans text-xs px-3.5 py-2 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
-                    <span>Reiniciar filtros</span>
+                    <span>Reiniciar</span>
+                  </button>
+
+                  <button
+                    onClick={handleExportFiisCsv}
+                    className="bg-purple-500/15 hover:bg-purple-500/25 text-[#a855f7] border border-purple-500/20 font-sans text-xs px-3 py-2 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer"
+                    title="Exportar dados para CSV"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Exportar CSV</span>
                   </button>
                 </div>
 
                 {/* Dyn counter of FIIs results */}
-                <span className="text-xs text-slate-400 font-sans tracking-wide">
-                  Mostrando <strong className="text-[#a855f7] font-extrabold">{
-                    initialScreenerFIIs.filter((f) => {
-                      const matchesDy = f.divYield >= fiiDyMin;
-                      const matchesLiquidity = f.liquidity >= fiiLiquidityMin;
-                      const matchesVacancy = f.vacancy <= fiiVacancyMax;
-                      const matchesVpv = f.vpv >= fiiVpvMin && f.vpv <= fiiVpvMax;
-                      const matchesSegment = !fiiSegment || f.segment === fiiSegment;
-                      
-                      let matchesMostrar = true;
-                      if (fiiMostrar === "Método 2em1") {
-                        matchesMostrar = f.vpv < 1.00 && f.divYield >= 8.5;
-                      } else if (fiiMostrar === "Apenas Descontados") {
-                        matchesMostrar = f.vpv < 1.00;
-                      }
-                      
-                      const matchesSearch = !fiiSearch.trim() || f.ticker.toLowerCase().includes(fiiSearch.toLowerCase());
-                      const matchesFav = !showOnlyFavorites || favoriteTickers.includes(f.ticker);
-                      
-                      return matchesDy && matchesLiquidity && matchesVacancy && matchesVpv && matchesSegment && matchesMostrar && matchesSearch && matchesFav;
-                    }).length
-                  }</strong> de <strong className="text-white font-bold">{initialScreenerFIIs.length}</strong> FIIs
+                <span className="text-xs text-slate-400 font-sans tracking-wide font-medium">
+                  Mostrando <strong className="text-[#a855f7] font-extrabold">{sortedAndFilteredFIIs.length}</strong> de <strong className="text-white font-bold">{initialScreenerFIIs.length}</strong> FIIs
                 </span>
               </div>
 
@@ -3158,28 +3619,35 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-                    {initialScreenerFIIs
-                      .filter((f) => {
-                        const matchesDy = f.divYield >= fiiDyMin;
-                        const matchesLiquidity = f.liquidity >= fiiLiquidityMin;
-                        const matchesVacancy = f.vacancy <= fiiVacancyMax;
-                        const matchesVpv = f.vpv >= fiiVpvMin && f.vpv <= fiiVpvMax;
-                        const matchesSegment = !fiiSegment || f.segment === fiiSegment;
-                        
-                        let matchesMostrar = true;
-                        if (fiiMostrar === "Método 2em1") {
-                          matchesMostrar = f.vpv < 1.00 && f.divYield >= 8.5;
-                        } else if (fiiMostrar === "Apenas Descontados") {
-                          matchesMostrar = f.vpv < 1.00;
-                        }
-                        
-                        const matchesSearch = !fiiSearch.trim() || f.ticker.toLowerCase().includes(fiiSearch.toLowerCase());
-                        const matchesFav = !showOnlyFavorites || favoriteTickers.includes(f.ticker);
-                        
-                        return matchesDy && matchesLiquidity && matchesVacancy && matchesVpv && matchesSegment && matchesMostrar && matchesSearch && matchesFav;
-                      })
-                      .sort((a, b) => b.divYield - a.divYield) // Sort descending by yield rank
-                      .map((f, idx) => {
+                    {isFiisFiltering ? (
+                      Array.from({ length: 5 }).map((_, i) => (
+                        <tr key={`fii-sk-${i}`} className="animate-pulse bg-white/[0.01]">
+                          <td className="py-4 px-3"><div className="h-3.5 w-3.5 bg-white/10 rounded mx-auto"></div></td>
+                          <td className="py-4 px-1"><div className="h-3.5 w-6 bg-white/10 rounded"></div></td>
+                          <td className="py-4 px-2 flex items-center gap-2">
+                            <div className="w-5 h-5 rounded-full bg-white/10"></div>
+                            <div className="flex flex-col gap-1">
+                              <div className="h-3 w-12 bg-white/10 rounded"></div>
+                              <div className="h-2 w-16 bg-white/10 rounded"></div>
+                            </div>
+                          </td>
+                          <td className="py-4 px-2"><div className="h-3 w-16 bg-white/10 rounded"></div></td>
+                          <td className="py-4 px-2 text-right"><div className="h-3 w-12 bg-white/10 rounded ml-auto"></div></td>
+                          <td className="py-4 px-2 text-right"><div className="h-3 w-10 bg-white/10 rounded ml-auto"></div></td>
+                          <td className="py-4 px-2 text-right"><div className="h-3 w-8 bg-white/10 rounded ml-auto"></div></td>
+                          <td className="py-4 px-2 text-right"><div className="h-3 w-16 bg-white/10 rounded ml-auto"></div></td>
+                          <td className="py-4 px-2 text-right"><div className="h-3 w-6 bg-white/10 rounded ml-auto"></div></td>
+                          <td className="py-4 px-2 text-right"><div className="h-3 w-8 bg-white/10 rounded ml-auto"></div></td>
+                        </tr>
+                      ))
+                    ) : sortedAndFilteredFIIs.length === 0 ? (
+                      <tr>
+                        <td colSpan={10} className="py-8 text-center text-slate-500 font-sans">
+                          Nenhum fundo imobiliário encontrado para os filtros atuais.
+                        </td>
+                      </tr>
+                    ) : (
+                      sortedAndFilteredFIIs.map((f, idx) => {
                         const isFav = favoriteTickers.includes(f.ticker);
                         
                         // Style segment pills uniquely
@@ -3252,7 +3720,8 @@ export default function App() {
                             </td>
                           </tr>
                         );
-                      })}
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -3280,9 +3749,16 @@ export default function App() {
                       onChange={(e) => setNewAlert({ ...newAlert, ticker: e.target.value })}
                       className="bg-black border border-white/10 rounded p-2 text-white"
                     >
-                      {["ITUB4", "VALE3", "PETR4", "BBAS3", "BBDC4", "ABEV3"].map(t => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
+                      <optgroup label="Ações">
+                        {["ITUB4", "VALE3", "PETR4", "BBAS3", "BBDC4", "ABEV3"].map(t => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="Fundos Imobiliários (FIIs)">
+                        {["VGRI11", "KIVO11", "RBVA11", "AAZQ11", "TRBL11", "HABT11", "RURA11", "EGAF11", "KNIP11", "HGLG11", "XPML11", "KNCR11", "HGRE11"].map(t => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </optgroup>
                     </select>
                   </div>
 
@@ -3298,6 +3774,8 @@ export default function App() {
                         <option value="P/L">Múltiplo P/L</option>
                         <option value="DY">Yield %</option>
                         <option value="RSI">I.F.R (RSI)</option>
+                        <option value="P/VP">FII - P/VP</option>
+                        <option value="Vacancy">FII - Vacância %</option>
                       </select>
                     </div>
                     <div className="flex flex-col gap-1">
@@ -3387,6 +3865,49 @@ export default function App() {
                         </div>
                       </div>
                     ))}
+                  </div>
+
+                  {/* Visual Notifications Panel */}
+                  <div className="mt-5 border-t border-white/10 pt-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-1.5 text-rose-400 font-bold">
+                        <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                        <h5 className="text-[10px] uppercase tracking-wider font-mono">Histórico de Disparos / Painel de Notificações</h5>
+                      </div>
+                      {triggeredNotifications.length > 0 && (
+                        <button 
+                          onClick={() => setTriggeredNotifications([])} 
+                          className="text-[10px] text-rose-500 hover:text-rose-400 hover:underline cursor-pointer font-sans"
+                        >
+                          Limpar Tudo
+                        </button>
+                      )}
+                    </div>
+                    {triggeredNotifications.length === 0 ? (
+                      <p className="text-[11px] text-slate-500 italic py-2 font-sans">
+                        Nenhum alerta disparado recentemente. Sistema monitorando em tempo real...
+                      </p>
+                    ) : (
+                      <div className="space-y-1.5 max-h-[140px] overflow-y-auto pr-1">
+                        {triggeredNotifications.map((n) => (
+                          <div key={n.id} className="p-2 bg-red-500/5 hover:bg-red-500/10 border border-red-500/10 rounded flex items-start justify-between gap-2.5 text-[11px] font-sans">
+                            <div className="flex items-start gap-2">
+                              <span className="bg-red-500/10 text-red-400 px-1 py-0.5 rounded text-[8px] font-mono font-bold shrink-0">DISPARADO</span>
+                              <div className="space-y-0.5">
+                                <p className="text-white font-medium leading-tight">{n.message}</p>
+                                <span className="text-[9px] text-slate-500 font-mono block">{n.timestamp}</span>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => setTriggeredNotifications(prev => prev.filter(item => item.id !== n.id))}
+                              className="text-slate-500 hover:text-slate-300 transition-colors cursor-pointer text-xs leading-none"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -3621,6 +4142,311 @@ export default function App() {
           <span>©2026 B3-QUANT-FREE INTEGRATED</span>
         </div>
       </footer>
+
+      {/* Side-by-side comparative widgets */}
+      {selectedCompareTickers.length > 0 && (
+        <div className="fixed bottom-24 right-6 bg-[#0f0f0f] border border-[#a855f7]/40 shadow-2xl shadow-[#a855f7]/15 rounded-lg p-3.5 font-mono z-40 max-w-sm flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-xs text-white font-bold flex items-center gap-1.5">
+              <Scale className="w-3.5 h-3.5 text-[#a855f7]" />
+              Comparar Lado a Lado ({selectedCompareTickers.length}/3)
+            </span>
+            <button 
+              onClick={() => setSelectedCompareTickers([])}
+              className="text-[10px] text-slate-400 hover:text-white uppercase font-bold"
+            >
+              Limpar
+            </button>
+          </div>
+          <div className="flex gap-1.5 text-[11px] font-bold text-orange-400">
+            {selectedCompareTickers.map(t => (
+              <span key={t} className="bg-white/5 border border-white/10 px-2 py-0.5 rounded">
+                {t}
+              </span>
+            ))}
+          </div>
+          <button
+            onClick={() => setShowCompareModal(true)}
+            className="w-full mt-1.5 bg-[#a855f7] hover:bg-purple-600 text-white font-bold py-1.5 rounded text-xs transition-colors flex items-center justify-center gap-1.5"
+          >
+            <span>Abrir Painel Comparativo</span>
+          </button>
+        </div>
+      )}
+
+      {showCompareModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <div className="bg-[#0b0b0b] border border-white/15 p-6 rounded-lg w-full max-w-4xl font-mono shadow-2xl relative my-8 text-left">
+            <button 
+              onClick={() => setShowCompareModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white text-lg font-bold"
+            >
+              ✕
+            </button>
+            
+            <div className="mb-5">
+              <span className="text-[10px] uppercase text-[#a855f7] tracking-widest font-extrabold">COMPARATIVE_MATRIX</span>
+              <h3 className="text-white text-lg font-bold">Painel de Comparação Lado a Lado</h3>
+              <p className="text-xs text-slate-400">Analise diretamente os indicadores de até 3 empresas para suas decisões quantitativas.</p>
+            </div>
+
+            <div className="overflow-x-auto rounded-lg border border-white/5 bg-black/60 mb-6">
+              <table className="w-full text-left text-xs divide-y divide-white/5">
+                <thead>
+                  <tr className="bg-white/5 text-slate-300 font-bold select-none">
+                    <th className="py-3 px-4 uppercase text-[10px] tracking-wider">Métrica / Ativo</th>
+                    {selectedCompareTickers.map(ticker => {
+                      const asset = initialScreenerStocks.find(s => s.ticker === ticker);
+                      return (
+                        <th key={ticker} className="py-3 px-4 text-center border-l border-white/5">
+                          <span className="text-orange-500 font-extrabold text-sm block">{ticker}</span>
+                          <span className="text-[10px] text-slate-400 font-normal block max-w-[150px] truncate mx-auto">{asset?.name}</span>
+                        </th>
+                      );
+                    })}
+                    {Array.from({ length: Math.max(0, 3 - selectedCompareTickers.length) }).map((_, i) => (
+                      <th key={`empty-th-${i}`} className="py-3 px-4 text-center text-slate-600 italic border-l border-white/5">
+                        Espaço Disponível vago
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5 text-slate-300 font-normal">
+                  {/* Preço Row */}
+                  <tr className="hover:bg-white/[0.02]">
+                    <td className="py-2.5 px-4 font-mono font-bold text-slate-400 text-xs">Cotação Atual</td>
+                    {selectedCompareTickers.map(ticker => {
+                      const asset = initialScreenerStocks.find(s => s.ticker === ticker);
+                      return (
+                        <td key={ticker} className="py-2.5 px-4 text-center font-mono font-bold text-white border-l border-white/5">
+                          {asset ? rFormat(asset.price) : "-"}
+                        </td>
+                      );
+                    })}
+                    {Array.from({ length: Math.max(0, 3 - selectedCompareTickers.length) }).map((_, i) => (
+                      <td key={`empty-cote-${i}`} className="py-2.5 px-4 text-center text-slate-600 border-l border-white/5">-</td>
+                    ))}
+                  </tr>
+                  {/* Dividend Yield */}
+                  <tr className="hover:bg-white/[0.02]">
+                    <td className="py-2.5 px-4 font-mono font-bold text-slate-400 text-xs">Dividend Yield (DY)</td>
+                    {selectedCompareTickers.map(ticker => {
+                      const asset = initialScreenerStocks.find(s => s.ticker === ticker);
+                      return (
+                        <td key={ticker} className="py-2.5 px-4 text-center font-mono text-emerald-400 font-bold border-l border-white/5">
+                          {asset ? `${asset.divYield.toFixed(2)}%` : "-"}
+                        </td>
+                      );
+                    })}
+                    {Array.from({ length: Math.max(0, 3 - selectedCompareTickers.length) }).map((_, i) => (
+                      <td key={`empty-dy-${i}`} className="py-2.5 px-4 text-center text-slate-600 border-l border-white/5">-</td>
+                    ))}
+                  </tr>
+                  {/* P/L */}
+                  <tr className="hover:bg-white/[0.02]">
+                    <td className="py-2.5 px-4 font-mono font-bold text-slate-400 text-xs">Preço/Lucro (P/L)</td>
+                    {selectedCompareTickers.map(ticker => {
+                      const asset = initialScreenerStocks.find(s => s.ticker === ticker);
+                      return (
+                        <td key={ticker} className="py-2.5 px-4 text-center font-mono font-bold text-orange-400 border-l border-white/5">
+                          {asset ? asset.pl.toFixed(2) : "-"}
+                        </td>
+                      );
+                    })}
+                    {Array.from({ length: Math.max(0, 3 - selectedCompareTickers.length) }).map((_, i) => (
+                      <td key={`empty-pl-${i}`} className="py-2.5 px-4 text-center text-slate-600 border-l border-white/5">-</td>
+                    ))}
+                  </tr>
+                  {/* Margem Líquida */}
+                  <tr className="hover:bg-white/[0.02]">
+                    <td className="py-2.5 px-4 font-mono font-bold text-slate-400 text-xs">Margem Líquida (%)</td>
+                    {selectedCompareTickers.map(ticker => {
+                      const asset = initialScreenerStocks.find(s => s.ticker === ticker);
+                      return (
+                        <td key={ticker} className="py-2.5 px-4 text-center font-mono text-blue-300 border-l border-white/5">
+                          {asset ? `${asset.netMargin.toFixed(2)}%` : "-"}
+                        </td>
+                      );
+                    })}
+                    {Array.from({ length: Math.max(0, 3 - selectedCompareTickers.length) }).map((_, i) => (
+                      <td key={`empty-mg-${i}`} className="py-2.5 px-4 text-center text-slate-600 border-l border-white/5">-</td>
+                    ))}
+                  </tr>
+                  {/* ROE */}
+                  <tr className="hover:bg-white/[0.02]">
+                    <td className="py-2.5 px-4 font-mono font-bold text-slate-400 text-xs">ROE (%)</td>
+                    {selectedCompareTickers.map(ticker => {
+                      const asset = initialScreenerStocks.find(s => s.ticker === ticker);
+                      return (
+                        <td key={ticker} className="py-2.5 px-4 text-center font-mono text-pink-300 font-bold border-l border-white/5">
+                          {asset ? `${asset.roe.toFixed(2)}%` : "-"}
+                        </td>
+                      );
+                    })}
+                    {Array.from({ length: Math.max(0, 3 - selectedCompareTickers.length) }).map((_, i) => (
+                      <td key={`empty-roe-${i}`} className="py-2.5 px-4 text-center text-slate-600 border-l border-white/5">-</td>
+                    ))}
+                  </tr>
+                  {/* DL/EBITDA */}
+                  <tr className="hover:bg-white/[0.02]">
+                    <td className="py-2.5 px-4 font-mono font-bold text-slate-400 text-xs">Dívida Líquida / EBITDA</td>
+                    {selectedCompareTickers.map(ticker => {
+                      const asset = initialScreenerStocks.find(s => s.ticker === ticker);
+                      return (
+                        <td key={ticker} className="py-2.5 px-4 text-center font-mono border-l border-white/5">
+                          {asset ? asset.dlEbitda.toFixed(2) : "-"}
+                        </td>
+                      );
+                    })}
+                    {Array.from({ length: Math.max(0, 3 - selectedCompareTickers.length) }).map((_, i) => (
+                      <td key={`empty-dle-${i}`} className="py-2.5 px-4 text-center text-slate-600 border-l border-white/5">-</td>
+                    ))}
+                  </tr>
+                  {/* Valuation Bazin */}
+                  <tr className="bg-amber-500/5 hover:bg-amber-500/10">
+                    <td className="py-2.5 px-4 font-mono font-bold text-amber-300 text-xs">Valuation Décio Bazin</td>
+                    {selectedCompareTickers.map(ticker => {
+                      const asset = initialScreenerStocks.find(s => s.ticker === ticker);
+                      const bazinVal = asset ? (asset.price * asset.divYield / 100) / (vBazin / 100) : 0;
+                      return (
+                        <td key={ticker} className="py-2.5 px-4 text-center font-mono font-bold text-amber-200 border-l border-white/5">
+                          {asset ? rFormat(bazinVal) : "-"}
+                        </td>
+                      );
+                    })}
+                    {Array.from({ length: Math.max(0, 3 - selectedCompareTickers.length) }).map((_, i) => (
+                      <td key={`empty-bz-${i}`} className="py-2.5 px-4 text-center text-slate-600 border-l border-white/5">-</td>
+                    ))}
+                  </tr>
+                  {/* Valuation Graham */}
+                  <tr className="bg-blue-500/5 hover:bg-blue-500/10">
+                    <td className="py-2.5 px-4 font-mono font-bold text-blue-300 text-xs">Valuation Graham</td>
+                    {selectedCompareTickers.map(ticker => {
+                      const asset = initialScreenerStocks.find(s => s.ticker === ticker);
+                      const grahamVal = asset ? Math.sqrt(vGraham * asset.lpa * asset.vpa) : null;
+                      return (
+                        <td key={ticker} className="py-2.5 px-4 text-center font-mono font-bold text-blue-200 border-l border-white/5">
+                          {asset && grahamVal ? rFormat(grahamVal) : "R$ 0,00"}
+                        </td>
+                      );
+                    })}
+                    {Array.from({ length: Math.max(0, 3 - selectedCompareTickers.length) }).map((_, i) => (
+                      <td key={`empty-gr-${i}`} className="py-2.5 px-4 text-center text-slate-600 border-l border-white/5">-</td>
+                    ))}
+                  </tr>
+                  {/* Valuation Peter Lynch */}
+                  <tr className="bg-purple-500/5 hover:bg-purple-500/10">
+                    <td className="py-2.5 px-4 font-mono font-bold text-purple-300 text-xs">Valuation Peter Lynch</td>
+                    {selectedCompareTickers.map(ticker => {
+                      const asset = initialScreenerStocks.find(s => s.ticker === ticker);
+                      const lynchVal = asset ? ((asset.growthRate || 3.0) + asset.divYield) / asset.pl : 0;
+                      return (
+                        <td key={ticker} className="py-2.5 px-4 text-center font-mono font-bold text-purple-200 border-l border-white/5">
+                          {asset ? lynchVal.toFixed(2) : "-"}
+                        </td>
+                      );
+                    })}
+                    {Array.from({ length: Math.max(0, 3 - selectedCompareTickers.length) }).map((_, i) => (
+                      <td key={`empty-plh-${i}`} className="py-2.5 px-4 text-center text-slate-600 border-l border-white/5">-</td>
+                    ))}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* Interactive Radar Balance Graphic visualizer */}
+            <div className="mb-6">
+              <CustomRadarChart tickers={selectedCompareTickers} initialScreenerStocks={initialScreenerStocks} />
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button 
+                onClick={() => setShowCompareModal(false)}
+                className="bg-zinc-800 hover:bg-zinc-700 text-white font-sans text-xs px-4 py-2 rounded-lg font-bold transition-colors"
+              >
+                Fechar Comparação
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Save presets dialogs */}
+      {showSaveStockDialog && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-[#0f0f0f] border border-white/10 p-5 rounded-lg w-full max-w-sm font-mono shadow-2xl text-left">
+            <h4 className="text-white text-sm font-bold mb-3 flex items-center gap-2">
+              <Save className="w-4 h-4 text-emerald-400" />
+              <span>Salvar Padrão de Filtros</span>
+            </h4>
+            <p className="text-xs text-slate-400 mb-4 font-sans">
+              Insira um nome identificador para salvar as configurações de filtros de Ações atuais.
+            </p>
+            <input
+              type="text"
+              placeholder="Ex: Dividendos Altas Margens"
+              value={newStockFilterName}
+              onChange={(e) => setNewStockFilterName(e.target.value)}
+              className="w-full bg-black border border-white/10 rounded px-3 py-2 text-xs text-white placeholder-slate-600 outline-none mb-4 focus:border-emerald-500"
+            />
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => {
+                  setNewStockFilterName("");
+                  setShowSaveStockDialog(false);
+                }}
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveStockFilter}
+                className="px-4 py-1.5 text-xs bg-emerald-500 hover:bg-emerald-400 text-black font-bold rounded transition-colors"
+              >
+                Salvar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSaveFiiDialog && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4 text-left">
+          <div className="bg-[#0f0f0f] border border-white/10 p-5 rounded-lg w-full max-w-sm font-mono shadow-2xl">
+            <h4 className="text-white text-sm font-bold mb-3 flex items-center gap-2">
+              <Save className="w-4 h-4 text-[#a855f7]" />
+              <span>Salvar Padrão de Filtros</span>
+            </h4>
+            <p className="text-xs text-slate-400 mb-4 font-sans">
+              Insira um nome identificador para os filtros de FIIs de sua preferência.
+            </p>
+            <input
+              type="text"
+              placeholder="Ex: Descontados Tijolos"
+              value={newFiiFilterName}
+              onChange={(e) => setNewFiiFilterName(e.target.value)}
+              className="w-full bg-black border border-white/10 rounded px-3 py-2 text-xs text-white placeholder-slate-600 outline-none mb-4 focus:border-[#a855f7]"
+            />
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => {
+                  setNewFiiFilterName("");
+                  setShowSaveFiiDialog(false);
+                }}
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveFiiFilter}
+                className="px-4 py-1.5 text-xs bg-[#a855f7] hover:bg-purple-400 text-white font-bold rounded transition-colors"
+              >
+                Salvar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
