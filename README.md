@@ -31,13 +31,16 @@ Esta aplicação possui uma arquitetura moderna dividida em duas frentes de trab
 
 ### 💡 Solução de Problemas no Windows (Vite & TSX)
 
-Se ao rodar `npm run dev` no Windows com Node v21 você encontrar o erro:
-`TypeError [ERR_INVALID_URL_SCHEME]: The URL must be of scheme file`
+**Atualização:** Nós atualizamos o script `npm run dev` do projeto para compilar o servidor TypeScript `server.ts` de forma dinâmica usando `esbuild` antes de rodar com `node` puro. Isso **remove completamente os loaders dinâmicos** em tempo de execução que causavam o erro de caminhos do Windows no Node v21.2.0 (`TypeError [ERR_INVALID_URL_SCHEME]`).
 
-Isso ocorre devido a uma incompatibilidade entre o carregador `tsx` e o sistema de arquivos do Windows em algumas versões específicas do Node.js. Você pode resolver isso de **três formas**:
+Agora você pode rodar diretamente:
+```bash
+npm run dev
+```
 
-#### Opção A: Executar a Versão de Produção Compilada (Recomendado e mais rápido!)
-Como o projeto está configurado para compilar o servidor TypeScript de forma autônoma para CommonJS nativo, você pode simplesmente gerar a build e iniciá-la sem ferramentas de desenvolvimento ativas:
+Se por algum motivo de ambiente local você ainda queira alternativas, você pode:
+
+#### Opção A: Executar a Versão de Produção Compilada
 ```bash
 # Compila o frontend e o servidor Node.js
 npm run build
@@ -47,10 +50,10 @@ npm run start
 ```
 
 #### Opção B: Atualizar o Node.js
-Atualize o Node.js para uma versão estável LTS mais recente (como **Node v22.x** ou superior), onde esse bug de caminhos do Windows no ESM já foi corrigido.
+Atualize o Node.js para uma versão estável LTS mais recente (como **Node v22.x** ou superior), onde o bug nativo do carregador ESM do Windows no Node.js v21.2.0 foi corrigido pela equipe do Node.
 
 #### Opção C: Executar o Frontend Separadamente
-Caso queira testar apenas a interface visual sem o proxy intermediário:
+Caso queira testar apenas a interface visual estática sem o proxy intermediário de IA:
 ```bash
 npx vite
 ```
