@@ -810,16 +810,19 @@ export const CustomRadarChart: React.FC<{ tickers: string[]; initialScreenerStoc
 };
 
 // 7. HIGH-FIDELITY ACTIVE TICKER 12-MONTH HISTORICAL PRICE CHART (RECHARTS)
-export const Stock12mPriceHistoryChart: React.FC<{ ticker: string; currentPrice: number; var12m: number }> = ({ ticker, currentPrice, var12m }) => {
+export const Stock12mPriceHistoryChart: React.FC<{ ticker: string; currentPrice?: number; var12m?: number }> = ({ ticker = "", currentPrice = 50, var12m = 0 }) => {
   // Deterministic procedural generator for 12 months history
   const data = React.useMemo(() => {
     const months = ["Jul/25", "Ago/25", "Set/25", "Out/25", "Nov/25", "Dez/25", "Jan/26", "Fev/26", "Mar/26", "Abr/26", "Mai/26", "Jun/26"];
-    const startPrice = currentPrice / (1 + var12m / 100);
+    const safePrice = typeof currentPrice === "number" ? currentPrice : 50;
+    const safeVar = typeof var12m === "number" ? var12m : 0;
+    const startPrice = safePrice / (1 + safeVar / 100);
+    const safeTicker = ticker || "STOCK";
     
     // Seed hash based on ticker characters for deterministic wave
     let hash = 0;
-    for (let c = 0; c < ticker.length; c++) {
-      hash += ticker.charCodeAt(c);
+    for (let c = 0; c < safeTicker.length; c++) {
+      hash += safeTicker.charCodeAt(c);
     }
     
     return months.map((month, i) => {
@@ -827,24 +830,26 @@ export const Stock12mPriceHistoryChart: React.FC<{ ticker: string; currentPrice:
         return { date: month, price: Number(startPrice.toFixed(2)) };
       }
       if (i === 11) {
-        return { date: month, price: Number(currentPrice.toFixed(2)) };
+        return { date: month, price: Number(safePrice.toFixed(2)) };
       }
       
       const ratio = i / 11;
-      const base = startPrice + (currentPrice - startPrice) * ratio;
-      const wave = Math.sin(ratio * Math.PI * 2.5 + hash) * (currentPrice * 0.05) * Math.sin(ratio * Math.PI);
+      const base = startPrice + (safePrice - startPrice) * ratio;
+      const wave = Math.sin(ratio * Math.PI * 2.5 + hash) * (safePrice * 0.05) * Math.sin(ratio * Math.PI);
       const calculatedPrice = Math.max(0.2, base + wave);
       
       return { date: month, price: Number(calculatedPrice.toFixed(2)) };
     });
   }, [ticker, currentPrice, var12m]);
 
-  const isPositive = var12m >= 0;
+  const safeVar12m = typeof var12m === "number" ? var12m : 0;
+  const isPositive = safeVar12m >= 0;
   const strokeColor = isPositive ? "#10b981" : "#f43f5e";
   const fillColor = isPositive ? "rgba(16, 185, 129, 0.1)" : "rgba(244, 63, 94, 0.1)";
 
   const maxPrice = Math.max(...data.map(d => d.price));
   const minPrice = Math.min(...data.map(d => d.price));
+  const safeCurrentPrice = typeof currentPrice === "number" ? currentPrice : 50;
 
   return (
     <div className="bg-black/80 border border-white/10 rounded-xl p-4 w-full text-xs">
@@ -858,7 +863,7 @@ export const Stock12mPriceHistoryChart: React.FC<{ ticker: string; currentPrice:
         <div className="text-right">
           <p className="text-[10px] text-slate-400">Variação Acumulada</p>
           <span className={`text-sm font-bold font-mono ${isPositive ? "text-emerald-400" : "text-rose-500"}`}>
-            {isPositive ? "+" : ""}{var12m.toFixed(2)}%
+            {isPositive ? "+" : ""}{safeVar12m.toFixed(2)}%
           </span>
         </div>
       </div>
@@ -874,7 +879,7 @@ export const Stock12mPriceHistoryChart: React.FC<{ ticker: string; currentPrice:
         </div>
         <div>
           <span className="text-[9px] text-slate-500 block">FECHAMENTO ATUAL</span>
-          <span className="text-amber-400 text-[11px] font-bold">R$ {currentPrice.toFixed(2)}</span>
+          <span className="text-amber-400 text-[11px] font-bold">R$ {safeCurrentPrice.toFixed(2)}</span>
         </div>
       </div>
 

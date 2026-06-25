@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
+import jsPDF from "jspdf";
+import html2canvas from "html2canvas";
 import {
   TrendingUp,
   LayoutDashboard,
@@ -50,7 +52,10 @@ import {
   ChevronDown,
   Filter,
   Download,
-  Scale
+  Scale,
+  Smile,
+  Frown,
+  Meh
 } from "lucide-react";
 
 import {
@@ -134,6 +139,7 @@ export default function App() {
   ]);
   const [newAlert, setNewAlert] = useState({ ticker: "ITUB4", metric: "Price", condition: "Greater than", value: "" });
   const [tickerHistoryToShow, setTickerHistoryToShow] = useState<string | null>(null);
+  const thesisReportRef = useRef<HTMLDivElement>(null);
   const [selectedThesis, setSelectedThesis] = useState(initialTheses[0]);
   const [thesisText, setThesisText] = useState(initialTheses[0].thesisContent);
 
@@ -635,6 +641,40 @@ export default function App() {
     alert(`Tese salvada com sucesso para ${selectedThesis.ticker}!`);
   };
 
+  const handleExportPdf = async () => {
+    if (!thesisReportRef.current) return;
+    try {
+      const element = thesisReportRef.current;
+      const canvas = await html2canvas(element, {
+        useCORS: true,
+        backgroundColor: "#0b0b0b",
+        scale: 2
+      });
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF("p", "mm", "a4");
+      const imgWidth = 210;
+      const pageHeight = 295;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+
+      while (heightLeft >= 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+
+      pdf.save(`Relatorio_Tese_${selectedThesis.ticker}.pdf`);
+    } catch (error) {
+      console.error("Erro ao gerar PDF:", error);
+      alert("Erro ao exportar PDF. Por favor tente novamente.");
+    }
+  };
+
   // CSV EXPORT ACTIONS
   const handleExportStocksCsv = () => {
     const header = [
@@ -855,6 +895,22 @@ export default function App() {
     fiiDyMin, fiiLiquidityMin, fiiVacancyMax, fiiVpvMin, fiiVpvMax, fiiSegment,
     fiiMostrar, fiiSearch, showOnlyFavorites, favoriteTickers
   ]);
+
+  const currentAssetPriceForModels = (() => {
+    const stock = initialScreenerStocks.find(s => s.ticker === valuationParams.ticker);
+    if (stock) return stock.price;
+    const fii = initialScreenerFIIs.find(f => f.ticker === valuationParams.ticker);
+    if (fii) return fii.price;
+    return 72.30;
+  })();
+
+  const precoJustoGordon = (valuationParams.gordonDiscount - valuationParams.gordonGrowth) > 0
+    ? (valuationParams.currentDividend * (1 + valuationParams.gordonGrowth / 100)) / ((valuationParams.gordonDiscount - valuationParams.gordonGrowth) / 100)
+    : 0;
+
+  const margemSegurancaGordon = currentAssetPriceForModels > 0 
+    ? ((precoJustoGordon - currentAssetPriceForModels) / currentAssetPriceForModels) * 100 
+    : 0;
 
   return (
     <div className="min-h-screen bg-black text-white font-sans antialiased overflow-x-hidden flex flex-col justify-between">
@@ -1123,9 +1179,16 @@ export default function App() {
                       onChange={(e) => setManualEntry({ ...manualEntry, ticker: e.target.value })}
                       className="bg-black border border-white/10 rounded p-1 text-xs text-white uppercase outline-none"
                     >
-                      {["VALE3", "PETR4", "ITUB4", "BBAS3", "BBDC4", "WEGE3", "HGLG11", "KNIP11"].map(t => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
+                      <optgroup label="Ações">
+                        {initialScreenerStocks.map(s => (
+                          <option key={s.ticker} value={s.ticker}>{s.ticker} - {s.name}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="Fundos Imobiliários (FIIs)">
+                        {initialScreenerFIIs.map(f => (
+                          <option key={f.ticker} value={f.ticker}>{f.ticker} - {f.name}</option>
+                        ))}
+                      </optgroup>
                     </select>
                     <select
                       value={manualEntry.type}
@@ -1399,49 +1462,181 @@ export default function App() {
         {/* ----------------- TAB 4: MODELOS DE VALUATION ----------------- */}
         {activeTab === "models" && (
           <div className="space-y-6">
+            {/* Seletor de Ativo para Precificação */}
+            <div className="bg-[#0b0b0b] border border-white/10 p-4 rounded flex flex-col sm:flex-row sm:items-center justify-between gap-4 font-mono">
+              <div>
+                <span className="text-[10px] text-orange-500 uppercase tracking-widest font-bold">VALUATION_ASSET_LOADER</span>
+                <h4 className="text-white text-xs font-bold mt-1">Carregar Dados de Ativo da B3 (Ações ou FIIs)</h4>
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  value={valuationParams.ticker}
+                  onChange={(e) => {
+                    const ticker = e.target.value;
+                    const isFii = ticker.endsWith("11");
+                    if (isFii) {
+                      const fii = initialScreenerFIIs.find(f => f.ticker === ticker);
+                      if (fii) {
+                        const calculatedVpa = fii.vpv > 0 ? fii.price / fii.vpv : fii.price;
+                        const dpa = (fii.price * fii.divYield) / 100;
+                        setValuationParams({
+                          ...valuationParams,
+                          ticker: fii.ticker,
+                          lpa: 0,
+                          vpa: calculatedVpa,
+                          dpa: dpa,
+                          currentDividend: dpa,
+                          gordonGrowth: 1.5,
+                          gordonDiscount: 8.5,
+                          requiredYield: 8.0,
+                        });
+                      }
+                    } else {
+                      const stock = initialScreenerStocks.find(s => s.ticker === ticker);
+                      if (stock) {
+                        setValuationParams({
+                          ...valuationParams,
+                          ticker: stock.ticker,
+                          lpa: stock.lpa || 3.38,
+                          vpa: stock.vpa || 47.92,
+                          dpa: (stock.price * stock.divYield) / 100,
+                          currentDividend: (stock.price * stock.divYield) / 100,
+                          gordonGrowth: stock.growthRate || 3.0,
+                          gordonDiscount: 14.5,
+                          requiredYield: 6.0,
+                        });
+                      }
+                    }
+                  }}
+                  className="bg-black border border-white/10 rounded p-2 text-xs text-white uppercase outline-none focus:border-orange-500 font-mono"
+                >
+                  <optgroup label="Ações">
+                    {initialScreenerStocks.map(s => (
+                      <option key={s.ticker} value={s.ticker}>{s.ticker} - {s.name}</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Fundos Imobiliários (FIIs)">
+                    {initialScreenerFIIs.map(f => (
+                      <option key={f.ticker} value={f.ticker}>{f.ticker} - {f.name}</option>
+                    ))}
+                  </optgroup>
+                </select>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               
-              {/* Graham Valuation model formula */}
-              <div className="bg-[#0b0b0b] border border-white/10 p-5 rounded font-mono relative">
-                <p className="text-[10px] uppercase tracking-widest text-orange-500 mb-1">VALUATION_GRAHAM</p>
-                <h4 className="text-white font-semibold text-sm mb-4">Ajuste de Margem de Graham</h4>
-                
-                <div className="space-y-3.5 text-xs mb-5">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-slate-400 text-[10px] uppercase">Lucro Por Ação (LPA)</label>
-                    <input
-                      type="number"
-                      value={valuationParams.lpa}
-                      onChange={(e) => setValuationParams({ ...valuationParams, lpa: parseFloat(e.target.value) || 0 })}
-                      className="bg-black border border-white/10 rounded p-1.5 text-white"
-                    />
+              {/* Graham / P/VP de Equilíbrio Valuation model formula */}
+              {valuationParams.ticker.endsWith("11") ? (
+                /* Card para FII: P/VP de Equilíbrio */
+                <div className="bg-[#0b0b0b] border border-white/10 p-5 rounded font-mono relative">
+                  <p className="text-[10px] uppercase tracking-widest text-orange-500 mb-1">VALUATION_FII_PVP</p>
+                  <h4 className="text-white font-semibold text-sm mb-4">P/VP de Equilíbrio de FII</h4>
+                  
+                  <div className="space-y-3.5 text-xs mb-5">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-slate-400 text-[10px] uppercase">Valor Patrimonial por Cota (VPC)</label>
+                      <input
+                        type="number"
+                        value={valuationParams.vpa}
+                        onChange={(e) => setValuationParams({ ...valuationParams, vpa: parseFloat(e.target.value) || 0 })}
+                        className="bg-black border border-white/10 rounded p-1.5 text-white font-mono"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-slate-400 text-[10px] uppercase">P/VP de Equilíbrio Alvo (x)</label>
+                      <input
+                        type="number"
+                        step="0.05"
+                        value={valuationParams.lpa === 0 ? 1.00 : valuationParams.lpa} // Usamos lpa temporariamente como o P/VP alvo para FIIs
+                        onChange={(e) => setValuationParams({ ...valuationParams, lpa: parseFloat(e.target.value) || 0 })}
+                        className="bg-black border border-white/10 rounded p-1.5 text-white font-mono"
+                      />
+                    </div>
                   </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-slate-400 text-[10px] uppercase">Valor Patrimonial por Ação (VPA)</label>
-                    <input
-                      type="number"
-                      value={valuationParams.vpa}
-                      onChange={(e) => setValuationParams({ ...valuationParams, vpa: parseFloat(e.target.value) || 0 })}
-                      className="bg-black border border-white/10 rounded p-1.5 text-white"
-                    />
-                  </div>
-                </div>
 
-                <div className="bg-white/5 p-4 rounded space-y-2 border-l-2 border-orange-600">
-                  <div className="flex justify-between items-center text-xs">
-                    <span>Preço Justo Graham</span>
-                    <span className="text-lg font-bold text-white">
-                      {valuationParams.lpa * valuationParams.vpa > 0
-                        ? rFormat(Math.sqrt(22.5 * valuationParams.lpa * valuationParams.vpa))
-                        : "R$ 0.00"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center text-[10px] text-slate-400">
-                    <span>Margem de Segurança (vs Preço Atual R$ 72.30):</span>
-                    <span className="text-rose-400 font-bold">-26.91%</span>
-                  </div>
+                  {(() => {
+                    const vpcVal = valuationParams.vpa;
+                    const pvpAlvo = valuationParams.lpa === 0 ? 1.00 : valuationParams.lpa;
+                    const precoJustoPvp = vpcVal * pvpAlvo;
+                    const currentAssetPrice = (() => {
+                      const fii = initialScreenerFIIs.find(f => f.ticker === valuationParams.ticker);
+                      return fii ? fii.price : 100;
+                    })();
+                    const margemSeguranca = currentAssetPrice > 0 ? ((precoJustoPvp - currentAssetPrice) / currentAssetPrice) * 100 : 0;
+
+                    return (
+                      <div className="bg-white/5 p-4 rounded space-y-2 border-l-2 border-orange-600">
+                        <div className="flex justify-between items-center text-xs">
+                          <span>Preço Justo por P/VP</span>
+                          <span className="text-lg font-bold text-white">
+                            {rFormat(precoJustoPvp)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center text-[10px] text-slate-400">
+                          <span>Margem de Segurança (vs R$ {currentAssetPrice.toFixed(2)}):</span>
+                          <span className={`font-bold ${margemSeguranca >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                            {margemSeguranca >= 0 ? "+" : ""}{margemSeguranca.toFixed(2)}%
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
-              </div>
+              ) : (
+                /* Card para Ações: Graham */
+                <div className="bg-[#0b0b0b] border border-white/10 p-5 rounded font-mono relative">
+                  <p className="text-[10px] uppercase tracking-widest text-orange-500 mb-1">VALUATION_GRAHAM</p>
+                  <h4 className="text-white font-semibold text-sm mb-4">Ajuste de Margem de Graham</h4>
+                  
+                  <div className="space-y-3.5 text-xs mb-5">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-slate-400 text-[10px] uppercase">Lucro Por Ação (LPA)</label>
+                      <input
+                        type="number"
+                        value={valuationParams.lpa}
+                        onChange={(e) => setValuationParams({ ...valuationParams, lpa: parseFloat(e.target.value) || 0 })}
+                        className="bg-black border border-white/10 rounded p-1.5 text-white font-mono"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-slate-400 text-[10px] uppercase">Valor Patrimonial por Ação (VPA)</label>
+                      <input
+                        type="number"
+                        value={valuationParams.vpa}
+                        onChange={(e) => setValuationParams({ ...valuationParams, vpa: parseFloat(e.target.value) || 0 })}
+                        className="bg-black border border-white/10 rounded p-1.5 text-white font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {(() => {
+                    const currentAssetPrice = (() => {
+                      const stock = initialScreenerStocks.find(s => s.ticker === valuationParams.ticker);
+                      return stock ? stock.price : 72.30;
+                    })();
+                    const grahamVal = valuationParams.lpa * valuationParams.vpa > 0 ? Math.sqrt(22.5 * valuationParams.lpa * valuationParams.vpa) : 0;
+                    const margemSeguranca = currentAssetPrice > 0 ? ((grahamVal - currentAssetPrice) / currentAssetPrice) * 100 : 0;
+
+                    return (
+                      <div className="bg-white/5 p-4 rounded space-y-2 border-l-2 border-orange-600">
+                        <div className="flex justify-between items-center text-xs">
+                          <span>Preço Justo Graham</span>
+                          <span className="text-lg font-bold text-white">
+                            {rFormat(grahamVal)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center text-[10px] text-slate-400">
+                          <span>Margem de Segurança (vs R$ {currentAssetPrice.toFixed(2)}):</span>
+                          <span className={`font-bold ${margemSeguranca >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                            {margemSeguranca >= 0 ? "+" : ""}{margemSeguranca.toFixed(2)}%
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
 
               {/* Bazin Valuation model formula */}
               <div className="bg-[#0b0b0b] border border-white/10 p-5 rounded font-mono relative">
@@ -1455,7 +1650,7 @@ export default function App() {
                       type="number"
                       value={valuationParams.dpa}
                       onChange={(e) => setValuationParams({ ...valuationParams, dpa: parseFloat(e.target.value) || 0 })}
-                      className="bg-black border border-white/10 rounded p-1.5 text-white"
+                      className="bg-black border border-white/10 rounded p-1.5 text-white font-mono"
                     />
                   </div>
                   <div className="flex flex-col gap-1">
@@ -1466,27 +1661,41 @@ export default function App() {
                         step="0.5"
                         value={valuationParams.requiredYield}
                         onChange={(e) => setValuationParams({ ...valuationParams, requiredYield: parseFloat(e.target.value) || 0 })}
-                        className="bg-black border border-white/10 rounded p-1.5 text-white flex-1"
+                        className="bg-black border border-white/10 rounded p-1.5 text-white flex-1 font-mono"
                       />
-                      <span className="bg-white/5 border border-white/10 px-2 flex items-center rounded text-slate-400">%</span>
+                      <span className="bg-white/5 border border-white/10 px-2 flex items-center rounded text-slate-400 font-mono">%</span>
                     </div>
                   </div>
                 </div>
 
-                <div className="bg-white/5 p-4 rounded space-y-2 border-l-2 border-[#a855f7]">
-                  <div className="flex justify-between items-center text-xs">
-                    <span>Preço Teto Decisivo</span>
-                    <span className="text-lg font-bold text-white">
-                      {valuationParams.requiredYield > 0
-                        ? rFormat((valuationParams.dpa * 100) / valuationParams.requiredYield)
-                        : "R$ 0.00"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center text-[10px] text-slate-400">
-                    <span>Margem de Segurança (vs R$ 72.30):</span>
-                    <span className="text-emerald-400 font-bold">+46.37%</span>
-                  </div>
-                </div>
+                {(() => {
+                  const currentAssetPrice = (() => {
+                    const stock = initialScreenerStocks.find(s => s.ticker === valuationParams.ticker);
+                    if (stock) return stock.price;
+                    const fii = initialScreenerFIIs.find(f => f.ticker === valuationParams.ticker);
+                    if (fii) return fii.price;
+                    return 72.30;
+                  })();
+                  const priceBazin = valuationParams.requiredYield > 0 ? (valuationParams.dpa * 100) / valuationParams.requiredYield : 0;
+                  const margemSeguranca = currentAssetPrice > 0 ? ((priceBazin - currentAssetPrice) / currentAssetPrice) * 100 : 0;
+
+                  return (
+                    <div className="bg-white/5 p-4 rounded space-y-2 border-l-2 border-[#a855f7]">
+                      <div className="flex justify-between items-center text-xs">
+                        <span>Preço Teto Decisivo</span>
+                        <span className="text-lg font-bold text-white">
+                          {rFormat(priceBazin)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-[10px] text-slate-400">
+                        <span>Margem de Segurança (vs R$ {currentAssetPrice.toFixed(2)}):</span>
+                        <span className={`font-bold ${margemSeguranca >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                          {margemSeguranca >= 0 ? "+" : ""}{margemSeguranca.toFixed(2)}%
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Gordon Growth model formula */}
@@ -1501,7 +1710,7 @@ export default function App() {
                       type="number"
                       value={valuationParams.currentDividend}
                       onChange={(e) => setValuationParams({ ...valuationParams, currentDividend: parseFloat(e.target.value) || 0 })}
-                      className="bg-black border border-white/10 rounded p-1.5 text-white"
+                      className="bg-black border border-white/10 rounded p-1.5 text-white font-mono"
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-2">
@@ -1511,7 +1720,7 @@ export default function App() {
                         type="number"
                         value={valuationParams.gordonGrowth}
                         onChange={(e) => setValuationParams({ ...valuationParams, gordonGrowth: parseFloat(e.target.value) || 0 })}
-                        className="bg-black border border-white/10 rounded p-1.5 text-white"
+                        className="bg-black border border-white/10 rounded p-1.5 text-white font-mono"
                       />
                     </div>
                     <div className="flex flex-col gap-1">
@@ -1520,7 +1729,7 @@ export default function App() {
                         type="number"
                         value={valuationParams.gordonDiscount}
                         onChange={(e) => setValuationParams({ ...valuationParams, gordonDiscount: parseFloat(e.target.value) || 0 })}
-                        className="bg-black border border-white/10 rounded p-1.5 text-white"
+                        className="bg-black border border-white/10 rounded p-1.5 text-white font-mono"
                       />
                     </div>
                   </div>
@@ -1530,17 +1739,18 @@ export default function App() {
                   <div className="flex justify-between items-center text-xs">
                     <span>Preço Justo de Gordon</span>
                     <span className="text-lg font-bold text-white">
-                      {(valuationParams.gordonDiscount - valuationParams.gordonGrowth) > 0
-                        ? rFormat((valuationParams.currentDividend * (1 + valuationParams.gordonGrowth / 100)) / ((valuationParams.gordonDiscount - valuationParams.gordonGrowth) / 100))
-                        : "R$ 0.00"}
+                      {rFormat(precoJustoGordon)}
                     </span>
                   </div>
                   <div className="flex justify-between items-center text-[10px] text-slate-400">
-                    <span>Margem de Segurança (vs R$ 72.30):</span>
-                    <span className="text-rose-400 font-bold">-24.58%</span>
+                    <span>Margem de Segurança (vs R$ {currentAssetPriceForModels.toFixed(2)}):</span>
+                    <span className={`font-bold ${margemSegurancaGordon >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                      {margemSegurancaGordon >= 0 ? "+" : ""}{margemSegurancaGordon.toFixed(2)}%
+                    </span>
                   </div>
                 </div>
               </div>
+
             </div>
           </div>
         )}
@@ -1550,386 +1760,661 @@ export default function App() {
           <div className="space-y-6">
             <p className="text-[10px] uppercase tracking-[0.25em] text-orange-500 font-bold font-mono">VALUATION_DISCOUNTED_CASH_FLOW_PRO</p>
             
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Column 1: Premissas & Realidade Projetada */}
-              <div className="lg:col-span-4 space-y-6">
-                
-                {/* Panel 1: Premissas */}
-                <div className="bg-[#0b0b0b] border border-white/10 p-5 rounded font-mono">
-                  <h4 className="text-white text-xs uppercase tracking-widest font-bold mb-4 border-b border-white/5 pb-2">Premissas</h4>
-                  
-                  <div className="space-y-4">
-                    {/* Payout Médio */}
-                    <div className="flex justify-between items-center bg-black/40 p-2.5 rounded border border-white/5 hover:border-white/10 transition-colors">
-                      <span className="text-xs text-slate-400">Payout médio</span>
-                      <div className="flex items-center gap-1.5">
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={dcfPayout}
-                          onChange={(e) => setDcfPayout(parseFloat(e.target.value) || 0)}
-                          className="bg-black/80 border border-white/10 rounded px-2 py-1 text-xs text-white text-right w-20 focus:border-orange-500 outline-none"
-                        />
-                        <span className="text-[11px] text-slate-500">%</span>
-                      </div>
-                    </div>
-
-                    {/* ROE */}
-                    <div className="flex justify-between items-center bg-black/40 p-2.5 rounded border border-white/5 hover:border-white/10 transition-colors">
-                      <span className="text-xs text-slate-400">ROE</span>
-                      <div className="flex items-center gap-1.5">
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={dcfRoe}
-                          onChange={(e) => setDcfRoe(parseFloat(e.target.value) || 0)}
-                          className="bg-black/80 border border-white/10 rounded px-2 py-1 text-xs text-white text-right w-20 focus:border-orange-500 outline-none"
-                        />
-                        <span className="text-[11px] text-slate-500">%</span>
-                      </div>
-                    </div>
-
-                    {/* Taxa Esperada de Crescimento */}
-                    <div className="flex justify-between items-center bg-black/40 p-2.5 rounded border border-white/5 hover:border-white/10 transition-colors">
-                      <span className="text-xs text-slate-400">Taxa Esperada de Crescimento</span>
-                      <div className="flex items-center gap-1.5">
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={dcfGrowthRate}
-                          onChange={(e) => {
-                            const newRate = parseFloat(e.target.value) || 0;
-                            setDcfGrowthRate(newRate);
-                            setDcfProjectedProfits(prev => {
-                              const updated = { ...prev };
-                              updated[2027] = Math.round(updated[2026] * (1 + newRate / 100));
-                              updated[2028] = Math.round(updated[2027] * (1 + newRate / 100));
-                              updated[2029] = Math.round(updated[2028] * (1 + newRate / 100));
-                              updated[2030] = Math.round(updated[2029] * (1 + newRate / 100));
-                              return updated;
-                            });
-                          }}
-                          className="bg-black/80 border border-white/10 rounded px-2 py-1 text-xs text-white text-right w-20 focus:border-orange-500 outline-none"
-                        />
-                        <span className="text-[11px] text-slate-500">%</span>
-                      </div>
-                    </div>
-
-                    {/* Taxa de Desconto */}
-                    <div className="flex justify-between items-center bg-black/40 p-2.5 rounded border border-white/5 hover:border-white/10 transition-colors">
-                      <div className="flex items-center gap-1">
-                        <span className="text-xs text-slate-400">Taxa de desconto</span>
-                        <div className="group relative">
-                          <Info className="w-3.5 h-3.5 text-slate-500 hover:text-white cursor-pointer" />
-                          <div className="absolute left-0 bottom-full mb-1 p-2 bg-black border border-white/10 text-[10px] text-slate-300 rounded shadow-xl hidden group-hover:block w-48 z-10">
-                            Custo de Capital Mínimo Esperado. Média histórica da Selic é de 11,53% (9,80% ex IR15%).
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={dcfDiscountRate}
-                          onChange={(e) => setDcfDiscountRate(parseFloat(e.target.value) || 0)}
-                          className="bg-black/80 border border-white/10 rounded px-2 py-1 text-xs text-white text-right w-20 focus:border-orange-500 outline-none"
-                        />
-                        <span className="text-[11px] text-slate-500">%</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <p className="mt-4 text-[10px] text-slate-500 leading-relaxed bg-white/5 p-2 rounded border border-white/5">
-                    ℹ️ Média histórica da Selic é 11,53% (9,80% ex IR15%) para taxa de desconto semestral livre de risco.
-                  </p>
-                </div>
-
-                {/* Panel 2: Realidade Projetada */}
-                {(() => {
-                  const vps: Record<number, number> = {};
-                  let sumVP = 0;
-
-                  const projYears = [2026, 2027, 2028];
-                  if (dcfProjectionYears === 5) {
-                    projYears.push(2029, 2030);
-                  }
-
-                  projYears.forEach((y, idx) => {
-                    const profit = dcfProjectedProfits[y] || 0;
-                    const discountFactor = Math.pow(1 + dcfDiscountRate / 100, idx + 1);
-                    const vp = profit / discountFactor;
-                    vps[y] = vp;
-                    sumVP += vp;
-                  });
-
-                  const lastYear = projYears[projYears.length - 1];
-                  const lastProfit = dcfProjectedProfits[lastYear] || 0;
-                  const denominator = (dcfDiscountRate - dcfPerpCrescimento) / 100;
-                  const perpProfitVal = denominator > 0 ? (lastProfit * (1 + dcfPerpCrescimento / 100)) / denominator : 0;
-                  const perpVPL = perpProfitVal / Math.pow(1 + dcfDiscountRate / 100, dcfProjectionYears);
-
-                  const totalValuationVal = sumVP + perpVPL;
-                  const precoPorAcaoVal = totalValuationVal / dcfSharesExTreasury;
-
-                  const currentAssetPrice = 11.27; // Custom para alinhar ao upside de 22,38% da Imagem 1
-                  const upsidePercent = ((precoPorAcaoVal - currentAssetPrice) / currentAssetPrice) * 100;
-
-                  return (
-                    <div className="bg-[#0b0b0b] border border-white/10 p-5 rounded font-mono">
-                      <h4 className="text-white text-xs uppercase tracking-widest font-bold mb-4 border-b border-white/5 pb-2">Realidade Projetada</h4>
-                      
-                      <div className="space-y-3.5">
-                        <div className="flex justify-between items-center text-xs">
-                          <span className="text-slate-400">Market cap justo</span>
-                          <span className="text-white font-bold">{rFormat(totalValuationVal)}</span>
-                        </div>
-
-                        <div className="flex justify-between items-center text-xs">
-                          <span className="text-slate-400">Nº total de ações</span>
-                          <div className="flex items-center gap-1.5">
-                            <input
-                              type="number"
-                              value={dcfTotalShares}
-                              onChange={(e) => setDcfTotalShares(parseInt(e.target.value) || 0)}
-                              className="bg-black/60 border border-white/10 rounded px-2 py-0.5 text-xs text-white text-right w-32 focus:border-orange-500 outline-none"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="flex justify-between items-center text-xs">
-                          <span className="text-slate-400">Nº ações ex-tesouraria</span>
-                          <div className="flex items-center gap-1.5">
-                            <input
-                              type="number"
-                              value={dcfSharesExTreasury}
-                              onChange={(e) => setDcfSharesExTreasury(parseInt(e.target.value) || 0)}
-                              className="bg-black/60 border border-white/10 rounded px-2 py-0.5 text-xs text-white text-right w-32 focus:border-orange-500 outline-none"
-                            />
-                          </div>
-                        </div>
-
-                        <hr className="border-white/5 my-2" />
-
-                        <div className="flex justify-between items-center p-2 rounded bg-blue-900/20 border border-blue-500/20">
-                          <span className="text-xs text-blue-400 font-bold">Preço por ação</span>
-                          <span className="text-sm font-black text-blue-400">{rFormat(precoPorAcaoVal)}</span>
-                        </div>
-
-                        <div className="flex justify-between items-center p-2 rounded bg-black/40">
-                          <span className="text-xs text-slate-400">Cotação p/ Comparação</span>
-                          <span className="text-xs font-bold text-white">R$ {currentAssetPrice.toFixed(2)}</span>
-                        </div>
-
-                        <div className="flex justify-between items-center p-2 rounded bg-emerald-950/20 border border-emerald-500/20">
-                          <span className="text-xs text-emerald-400 font-bold">Upside / Downside</span>
-                          <span className={`text-xs font-black ${upsidePercent >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                            {upsidePercent >= 0 ? "+" : ""}{upsidePercent.toFixed(2)}%
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="mt-5 grid grid-cols-2 gap-2 pt-2 border-t border-white/5">
-                        <button
-                          onClick={() => {
-                            const savedData = { dcfPayout, dcfRoe, dcfGrowthRate, dcfDiscountRate, dcfProjectionYears, totalValuationVal, precoPorAcaoVal };
-                            localStorage.setItem("b3_saved_dcf_pro", JSON.stringify(savedData));
-                            alert(`Fluxo de Caixa Descontado Salvo! Preço Justo Calculado: ${rFormat(precoPorAcaoVal)}`);
-                          }}
-                          className="flex items-center justify-center gap-1 bg-orange-600 hover:bg-orange-700 text-black text-[10px] uppercase font-bold py-2 px-3 rounded transition-all"
-                        >
-                          <Save className="w-3.5 h-3.5" />
-                          Salvar Preço Teto
-                        </button>
-                        <button
-                          onClick={() => {
-                            setDcfPayout(68.84);
-                            setDcfRoe(16.75);
-                            setDcfGrowthRate(5.22);
-                            setDcfDiscountRate(14.50);
-                            setDcfProjectionYears(3);
-                            setDcfTotalShares(2861782000);
-                            setDcfSharesExTreasury(2860682000);
-                            setDcfProjectedProfits({
-                              2026: 4000000000,
-                              2027: 4208800000,
-                              2028: 4428499360,
-                              2029: 4659667026,
-                              2030: 4902901645
-                            });
-                            setDcfPerpCrescimento(3.0);
-                          }}
-                          className="border border-white/10 hover:bg-white/5 text-slate-400 hover:text-white text-[10px] uppercase font-bold py-2 px-3 rounded transition-all"
-                        >
-                          Reset
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })()}
+            {/* Sincronização do Ticker ativo */}
+            <div className="bg-[#0b0b0b] border border-white/10 p-4 rounded flex flex-col sm:flex-row sm:items-center justify-between gap-4 font-mono select-none">
+              <div>
+                <span className="text-[10px] text-orange-500 uppercase tracking-widest font-bold">VALUATION_ASSET_SITUATIONAL_CONTEXT</span>
+                <h4 className="text-white text-xs font-bold mt-1">Análise de Fluxo para o Ativo: <span className="text-orange-500 font-black">{valuationParams.ticker}</span></h4>
               </div>
-
-              {/* Right Column: Fluxo de Caixa Descontado Table */}
-              <div className="lg:col-span-8 bg-[#0b0b0b] border border-white/10 p-5 rounded font-mono">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-5 border-b border-white/5 pb-3">
-                  <h4 className="text-white text-xs uppercase tracking-widest font-bold">Fluxo de Caixa Descontado</h4>
-                  
-                  {/* Selector years */}
-                  <div className="flex bg-white/5 border border-white/10 rounded p-0.5">
-                    <button
-                      onClick={() => setDcfProjectionYears(3)}
-                      className={`text-[10px] px-3 py-1 rounded transition-all font-bold ${dcfProjectionYears === 3 ? "bg-orange-600 text-black shadow" : "text-slate-400 hover:text-white"}`}
-                    >
-                      3 anos
-                    </button>
-                    <button
-                      onClick={() => setDcfProjectionYears(5)}
-                      className={`text-[10px] px-3 py-1 rounded transition-all font-bold ${dcfProjectionYears === 5 ? "bg-orange-600 text-black shadow" : "text-slate-400 hover:text-white"}`}
-                    >
-                      5 anos
-                    </button>
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs font-mono">
-                    <thead>
-                      <tr className="border-b border-white/10 text-slate-500 uppercase tracking-wider text-[10px]">
-                        <th className="pb-2 text-center w-14">Ano</th>
-                        <th className="pb-2 text-right">Lucro Líquido</th>
-                        <th className="pb-2 text-right">Crescimento</th>
-                        <th className="pb-2 text-right">VPL</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5 text-slate-300">
-                      
-                      {/* Históricos */}
-                      {Object.entries({
-                        2021: 3752869000,
-                        2022: 4094367000,
-                        2023: 5766835000,
-                        2024: 7119287000,
-                        2025: 4899617000
-                      }).map(([yr, val]) => {
-                        let pctStr = "-";
-                        if (yr === "2021") pctStr = "30,98%";
-                        if (yr === "2022") pctStr = "9,10%";
-                        if (yr === "2023") pctStr = "40,85%";
-                        if (yr === "2024") pctStr = "23,45%";
-                        if (yr === "2025") pctStr = "-31,18%";
-
-                        return (
-                          <tr key={yr} className="hover:bg-white/5 text-slate-500">
-                            <td className="py-3 font-bold text-center text-slate-500">{yr}</td>
-                            <td className="py-3 text-right">{rFormat(val)}</td>
-                            <td className={`py-3 text-right ${pctStr.startsWith("-") ? "text-rose-600/70" : "text-emerald-600/70"}`}>{pctStr}</td>
-                            <td className="py-3 text-right font-bold text-slate-600">-</td>
-                          </tr>
-                        );
-                      })}
-
-                      {/* Line break spacer */}
-                      <tr className="bg-white/5 h-0.5 border-none"><td colSpan={4}></td></tr>
-
-                      {/* Projetados */}
-                      {(() => {
-                        const years = [2026, 2027, 2028];
-                        if (dcfProjectionYears === 5) {
-                          years.push(2029, 2030);
-                        }
-
-                        return (
-                          <>
-                            {years.map((y, idx) => {
-                              const value = dcfProjectedProfits[y] || 0;
-                              
-                              let growthPct = dcfGrowthRate;
-                              if (y === 2026) {
-                                growthPct = ((value - 4899617000) / 4899617000) * 100;
-                              } else {
-                                const prevValue = dcfProjectedProfits[y - 1] || 1;
-                                growthPct = ((value - prevValue) / prevValue) * 100;
-                              }
-
-                              const discountFactor = Math.pow(1 + dcfDiscountRate / 100, idx + 1);
-                              const vp = value / discountFactor;
-
-                              return (
-                                <tr key={y} className="hover:bg-orange-500/5 transition-colors">
-                                  <td className="py-2 text-center font-bold text-orange-500">{y}</td>
-                                  <td className="py-2 text-right">
-                                    <div className="inline-flex items-center gap-1.5 w-full justify-end">
-                                      <span className="text-[10px] text-slate-600">R$</span>
-                                      <input
-                                        type="number"
-                                        value={value}
-                                        onChange={(e) => {
-                                          const numVal = parseInt(e.target.value) || 0;
-                                          setDcfProjectedProfits(prev => ({
-                                            ...prev,
-                                            [y]: numVal
-                                          }));
-                                        }}
-                                        className="bg-black/60 border border-white/10 rounded px-2 py-1 text-xs text-white text-right w-44 focus:border-orange-500 outline-none font-bold"
-                                      />
-                                    </div>
-                                  </td>
-                                  <td className={`py-2 text-right font-medium ${growthPct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                                    {growthPct >= 0 ? "+" : ""}{growthPct.toFixed(2)}%
-                                  </td>
-                                  <td className="py-2 text-right font-bold text-blue-400">{rFormat(vp)}</td>
-                                </tr>
-                              );
-                            })}
-
-                            {/* Perpetuo */}
-                            {(() => {
-                              const lastYear = years[years.length - 1];
-                              const lastProfit = dcfProjectedProfits[lastYear] || 0;
-                              const denominator = (dcfDiscountRate - dcfPerpCrescimento) / 100;
-                              const perpProfitVal = denominator > 0 ? (lastProfit * (1 + dcfPerpCrescimento / 100)) / denominator : 0;
-                              const perpVPL = perpProfitVal / Math.pow(1 + dcfDiscountRate / 100, dcfProjectionYears);
-
-                              return (
-                                <tr className="hover:bg-indigo-550/5 transition-colors bg-indigo-950/15">
-                                  <td className="py-3 text-center font-bold text-indigo-400">Perpétuo</td>
-                                  <td className="py-3 text-right text-indigo-300 font-bold">{rFormat(perpProfitVal)}</td>
-                                  <td className="py-2 text-right">
-                                    <div className="flex items-center justify-end gap-1.5 font-bold">
-                                      <button
-                                        onClick={() => setDcfPerpCrescimento(prev => Math.max(0, parseFloat((prev - 0.1).toFixed(2))))}
-                                        className="w-5 h-5 bg-white/5 rounded border border-white/10 hover:bg-white/10 text-slate-300 flex items-center justify-center font-bold text-xs"
-                                      >
-                                        -
-                                      </button>
-                                      <span className="text-white text-[11px] px-1 w-10 text-center">{dcfPerpCrescimento.toFixed(1)}%</span>
-                                      <button
-                                        onClick={() => setDcfPerpCrescimento(prev => parseFloat((prev + 0.1).toFixed(2)))}
-                                        className="w-5 h-5 bg-white/5 rounded border border-white/10 hover:bg-white/10 text-slate-300 flex items-center justify-center font-bold text-xs"
-                                      >
-                                        +
-                                      </button>
-                                    </div>
-                                  </td>
-                                  <td className="py-3 text-right font-black text-emerald-400">{rFormat(perpVPL)}</td>
-                                </tr>
-                              );
-                            })()}
-                          </>
-                        );
-                      })()}
-
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="mt-6 border-t border-white/5 pt-4 flex flex-col sm:flex-row justify-between items-center text-slate-500 text-xs">
-                  <span>
-                    💡 Nota: Os lucros projetados dos anos de estimativa podem ser modificados digitando novos valores.
-                  </span>
-                  <span className="font-semibold text-orange-500">B3-Quant FCDE Model</span>
-                </div>
+              <div className="text-[11px] text-slate-400 bg-white/5 border border-white/10 rounded px-3 py-1 text-right">
+                Método Ativo: <span className="text-white font-bold">{valuationParams.ticker.endsWith("11") ? "DDM de Proventos de FII" : "DCF de Lucro Corporativo"}</span>
               </div>
             </div>
+
+            {valuationParams.ticker.endsWith("11") ? (
+              /* ========================================================================= */
+              /* METODOLOGIA DDM PARA FUNDOS IMOBILIÁRIOS                                  */
+              /* ========================================================================= */
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                {/* Column 1: Premissas de FII */}
+                <div className="lg:col-span-4 space-y-6">
+                  <div className="bg-[#0b0b0b] border border-white/10 p-5 rounded font-mono">
+                    <h4 className="text-white text-xs uppercase tracking-widest font-bold mb-4 border-b border-white/5 pb-2">Premissas do FII</h4>
+                    
+                    <div className="space-y-4">
+                      {/* Rendimento Mensal do FII */}
+                      <div className="flex justify-between items-center bg-black/40 p-2.5 rounded border border-white/5 hover:border-white/10 transition-colors">
+                        <span className="text-xs text-slate-400">Rendimento Mensal por Cota</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] text-slate-500">R$</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={(valuationParams.dpa / 12)}
+                            onChange={(e) => setValuationParams({ ...valuationParams, dpa: (parseFloat(e.target.value) || 0) * 12 })}
+                            className="bg-black/80 border border-white/10 rounded px-2 py-1 text-xs text-white text-right w-20 focus:border-orange-500 outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Crescimento dos Rendimentos */}
+                      <div className="flex justify-between items-center bg-black/40 p-2.5 rounded border border-white/5 hover:border-white/10 transition-colors">
+                        <span className="text-xs text-slate-400">Crescimento Anual Esperado</span>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={valuationParams.gordonGrowth}
+                            onChange={(e) => setValuationParams({ ...valuationParams, gordonGrowth: parseFloat(e.target.value) || 0 })}
+                            className="bg-black/80 border border-white/10 rounded px-2 py-1 text-xs text-white text-right w-20 focus:border-orange-500 outline-none"
+                          />
+                          <span className="text-[11px] text-slate-500">%</span>
+                        </div>
+                      </div>
+
+                      {/* Taxa de Desconto */}
+                      <div className="flex justify-between items-center bg-black/40 p-2.5 rounded border border-white/5 hover:border-white/10 transition-colors">
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs text-slate-400">Taxa de Desconto (k)</span>
+                          <div className="group relative">
+                            <Info className="w-3.5 h-3.5 text-slate-500 hover:text-white cursor-pointer" />
+                            <div className="absolute left-0 bottom-full mb-1 p-2 bg-black border border-white/10 text-[10px] text-slate-300 rounded shadow-xl hidden group-hover:block w-48 z-10">
+                              Custo de Capital Exigido para o FII. Média de mercado de FIIs é de 8,0% a 10,0% a.a.
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={valuationParams.gordonDiscount}
+                            onChange={(e) => setValuationParams({ ...valuationParams, gordonDiscount: parseFloat(e.target.value) || 0 })}
+                            className="bg-black/80 border border-white/10 rounded px-2 py-1 text-xs text-white text-right w-20 focus:border-orange-500 outline-none"
+                          />
+                          <span className="text-[11px] text-slate-500">%</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <p className="mt-4 text-[10px] text-slate-500 leading-relaxed bg-white/5 p-2 rounded border border-white/5">
+                      ℹ️ O DDM para FIIs avalia o valor presente do fluxo futuro de proventos mensais e anuais distribuídos pelo fundo aos seus cotistas.
+                    </p>
+                  </div>
+
+                  {/* Resultados do FII */}
+                  {(() => {
+                    const monthlyYield = valuationParams.dpa / 12;
+                    const annualBase = monthlyYield * 12;
+                    const growthRate = valuationParams.gordonGrowth / 100;
+                    const discountRate = valuationParams.gordonDiscount / 100;
+
+                    let sumVP = 0;
+                    const years = dcfProjectionYears === 3 ? [1, 2, 3] : [1, 2, 3, 4, 5];
+                    years.forEach((y) => {
+                      const projDiv = annualBase * Math.pow(1 + growthRate, y);
+                      const discountFactor = Math.pow(1 + discountRate, y);
+                      sumVP += projDiv / discountFactor;
+                    });
+
+                    const lastProjDiv = annualBase * Math.pow(1 + growthRate, years.length);
+                    const denominator = discountRate - growthRate;
+                    const perpVal = denominator > 0 ? (lastProjDiv * (1 + growthRate)) / denominator : 0;
+                    const perpVPL = perpVal / Math.pow(1 + discountRate, years.length);
+
+                    const precoJustoFii = sumVP + perpVPL;
+                    const currentAssetPrice = (() => {
+                      const fii = initialScreenerFIIs.find(f => f.ticker === valuationParams.ticker);
+                      return fii ? fii.price : 100;
+                    })();
+                    const upsidePercent = currentAssetPrice > 0 ? ((precoJustoFii - currentAssetPrice) / currentAssetPrice) * 100 : 0;
+
+                    return (
+                      <div className="bg-[#0b0b0b] border border-white/10 p-5 rounded font-mono">
+                        <h4 className="text-white text-xs uppercase tracking-widest font-bold mb-4 border-b border-white/5 pb-2">Preço Justo Estimado</h4>
+                        
+                        <div className="space-y-3.5">
+                          <div className="flex justify-between items-center p-2 rounded bg-blue-900/20 border border-blue-500/20">
+                            <span className="text-xs text-blue-400 font-bold">Preço Justo por Cota</span>
+                            <span className="text-sm font-black text-blue-400">{rFormat(precoJustoFii)}</span>
+                          </div>
+
+                          <div className="flex justify-between items-center p-2 rounded bg-black/40 text-xs">
+                            <span className="text-slate-400">Cotação Atual</span>
+                            <span className="text-white font-bold">R$ {currentAssetPrice.toFixed(2)}</span>
+                          </div>
+
+                          <div className="flex justify-between items-center p-2 rounded bg-emerald-950/20 border border-emerald-500/20 text-xs">
+                            <span className="text-xs text-emerald-400 font-bold">Upside / Downside</span>
+                            <span className={`text-xs font-black ${upsidePercent >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                              {upsidePercent >= 0 ? "+" : ""}{upsidePercent.toFixed(2)}%
+                            </span>
+                          </div>
+
+                          <div className="mt-5 grid grid-cols-2 gap-2 pt-2 border-t border-white/5">
+                            <button
+                              onClick={() => {
+                                alert(`Preço Teto do FII ${valuationParams.ticker} salvo com sucesso: ${rFormat(precoJustoFii)}`);
+                              }}
+                              className="flex items-center justify-center gap-1 bg-orange-600 hover:bg-orange-700 text-black text-[10px] uppercase font-bold py-2 px-3 rounded transition-all"
+                            >
+                              <Save className="w-3.5 h-3.5" />
+                              Salvar Teto
+                            </button>
+                            <button
+                              onClick={() => {
+                                setValuationParams({
+                                  ...valuationParams,
+                                  dpa: (1.10 * 12),
+                                  gordonGrowth: 1.5,
+                                  gordonDiscount: 8.5
+                                });
+                              }}
+                              className="border border-white/10 hover:bg-white/5 text-slate-400 hover:text-white text-[10px] uppercase font-bold py-2 px-3 rounded transition-all"
+                            >
+                              Reset
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* Column 2: Tabela de Projeção de Proventos FII */}
+                <div className="lg:col-span-8 bg-[#0b0b0b] border border-white/10 p-5 rounded font-mono">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-5 border-b border-white/5 pb-3">
+                    <h4 className="text-white text-xs uppercase tracking-widest font-bold">Fluxo de Dividendos por Cota</h4>
+                    <div className="flex bg-white/5 border border-white/10 rounded p-0.5">
+                      <button
+                        onClick={() => setDcfProjectionYears(3)}
+                        className={`text-[10px] px-3 py-1 rounded transition-all font-bold ${dcfProjectionYears === 3 ? "bg-orange-600 text-black shadow" : "text-slate-400 hover:text-white"}`}
+                      >
+                        3 anos
+                      </button>
+                      <button
+                        onClick={() => setDcfProjectionYears(5)}
+                        className={`text-[10px] px-3 py-1 rounded transition-all font-bold ${dcfProjectionYears === 5 ? "bg-orange-600 text-black shadow" : "text-slate-400 hover:text-white"}`}
+                      >
+                        5 anos
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs font-mono">
+                      <thead>
+                        <tr className="border-b border-white/10 text-slate-500 uppercase tracking-wider text-[10px]">
+                          <th className="pb-2 text-center w-14">Ano</th>
+                          <th className="pb-2 text-right">Rendimento Projetado (Anual)</th>
+                          <th className="pb-2 text-right">Crescimento Anual</th>
+                          <th className="pb-2 text-right">Valor Presente Líquido (VPL)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5 text-slate-300">
+                        {/* Históricos de Exemplo */}
+                        <tr className="hover:bg-white/5 text-slate-550 select-none">
+                          <td className="py-2.5 font-bold text-center text-slate-500">2024</td>
+                          <td className="py-2.5 text-right">{rFormat(valuationParams.dpa * 0.95)}</td>
+                          <td className="py-2.5 text-right text-emerald-600/70">+1.50%</td>
+                          <td className="py-2.5 text-right font-bold text-slate-600">-</td>
+                        </tr>
+                        <tr className="hover:bg-white/5 text-slate-550 select-none">
+                          <td className="py-2.5 font-bold text-center text-slate-500">2025</td>
+                          <td className="py-2.5 text-right">{rFormat(valuationParams.dpa)}</td>
+                          <td className="py-2.5 text-right text-emerald-600/70">+5.26%</td>
+                          <td className="py-2.5 text-right font-bold text-slate-600">-</td>
+                        </tr>
+
+                        <tr className="bg-white/5 h-0.5 border-none"><td colSpan={4}></td></tr>
+
+                        {/* Projeções de FII */}
+                        {(() => {
+                          const limit = dcfProjectionYears;
+                          const annualBase = valuationParams.dpa;
+                          const growthRate = valuationParams.gordonGrowth / 100;
+                          const discountRate = valuationParams.gordonDiscount / 100;
+
+                          const projYears = Array.from({ length: limit }, (_, i) => i + 1);
+                          return (
+                            <>
+                              {projYears.map((y) => {
+                                const yrLabel = 2025 + y;
+                                const projVal = annualBase * Math.pow(1 + growthRate, y);
+                                const vpl = projVal / Math.pow(1 + discountRate, y);
+
+                                return (
+                                  <tr key={yrLabel} className="hover:bg-orange-500/5 transition-colors">
+                                    <td className="py-2.5 text-center font-bold text-orange-500">{yrLabel}</td>
+                                    <td className="py-2.5 text-right text-white font-bold">{rFormat(projVal)}</td>
+                                    <td className="py-2.5 text-right font-medium text-emerald-400">
+                                      +{valuationParams.gordonGrowth.toFixed(2)}%
+                                    </td>
+                                    <td className="py-2.5 text-right font-bold text-blue-400">{rFormat(vpl)}</td>
+                                  </tr>
+                                );
+                              })}
+
+                              {/* Perpetuidade */}
+                              {(() => {
+                                const lastProjDiv = annualBase * Math.pow(1 + growthRate, limit);
+                                const denominator = discountRate - growthRate;
+                                const perpProfitVal = denominator > 0 ? (lastProjDiv * (1 + growthRate)) / denominator : 0;
+                                const perpVPL = perpProfitVal / Math.pow(1 + discountRate, limit);
+
+                                return (
+                                  <tr className="hover:bg-indigo-550/5 transition-colors bg-indigo-950/15">
+                                    <td className="py-3 text-center font-bold text-indigo-400">Perpétuo</td>
+                                    <td className="py-3 text-right text-indigo-300 font-bold">{rFormat(perpProfitVal)}</td>
+                                    <td className="py-3 text-right text-white font-semibold">
+                                      g = {valuationParams.gordonGrowth.toFixed(1)}%
+                                    </td>
+                                    <td className="py-3 text-right font-black text-emerald-400">{rFormat(perpVPL)}</td>
+                                  </tr>
+                                );
+                              })()}
+                            </>
+                          );
+                        })()}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="mt-6 border-t border-white/5 pt-4 flex flex-col sm:flex-row justify-between items-center text-slate-500 text-xs select-none">
+                    <span>
+                      💡 Modelo de precificação adequado para ativos geradores de aluguel e rendimentos imobiliários recorrentes.
+                    </span>
+                    <span className="font-semibold text-orange-500">B3-Quant DDM FII Model</span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* ========================================================================= */
+              /* METODOLOGIA DCF TRADICIONAL PARA AÇÕES CORPORATIVAS                       */
+              /* ========================================================================= */
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                {/* Column 1: Premissas & Realidade Projetada */}
+                <div className="lg:col-span-4 space-y-6">
+                  
+                  {/* Panel 1: Premissas */}
+                  <div className="bg-[#0b0b0b] border border-white/10 p-5 rounded font-mono">
+                    <h4 className="text-white text-xs uppercase tracking-widest font-bold mb-4 border-b border-white/5 pb-2">Premissas</h4>
+                    
+                    <div className="space-y-4">
+                      {/* Payout Médio */}
+                      <div className="flex justify-between items-center bg-black/40 p-2.5 rounded border border-white/5 hover:border-white/10 transition-colors">
+                        <span className="text-xs text-slate-400">Payout médio</span>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={dcfPayout}
+                            onChange={(e) => setDcfPayout(parseFloat(e.target.value) || 0)}
+                            className="bg-black/80 border border-white/10 rounded px-2 py-1 text-xs text-white text-right w-20 focus:border-orange-500 outline-none font-mono"
+                          />
+                          <span className="text-[11px] text-slate-500 font-mono">%</span>
+                        </div>
+                      </div>
+
+                      {/* ROE */}
+                      <div className="flex justify-between items-center bg-black/40 p-2.5 rounded border border-white/5 hover:border-white/10 transition-colors">
+                        <span className="text-xs text-slate-400">ROE</span>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={dcfRoe}
+                            onChange={(e) => setDcfRoe(parseFloat(e.target.value) || 0)}
+                            className="bg-black/80 border border-white/10 rounded px-2 py-1 text-xs text-white text-right w-20 focus:border-orange-500 outline-none font-mono"
+                          />
+                          <span className="text-[11px] text-slate-500 font-mono">%</span>
+                        </div>
+                      </div>
+
+                      {/* Taxa Esperada de Crescimento */}
+                      <div className="flex justify-between items-center bg-black/40 p-2.5 rounded border border-white/5 hover:border-white/10 transition-colors">
+                        <span className="text-xs text-slate-400">Taxa Esperada de Crescimento</span>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={dcfGrowthRate}
+                            onChange={(e) => {
+                              const newRate = parseFloat(e.target.value) || 0;
+                              setDcfGrowthRate(newRate);
+                              setDcfProjectedProfits(prev => {
+                                const updated = { ...prev };
+                                updated[2027] = Math.round(updated[2026] * (1 + newRate / 100));
+                                updated[2028] = Math.round(updated[2027] * (1 + newRate / 100));
+                                updated[2029] = Math.round(updated[2028] * (1 + newRate / 100));
+                                updated[2030] = Math.round(updated[2029] * (1 + newRate / 100));
+                                return updated;
+                              });
+                            }}
+                            className="bg-black/80 border border-white/10 rounded px-2 py-1 text-xs text-white text-right w-20 focus:border-orange-500 outline-none font-mono"
+                          />
+                          <span className="text-[11px] text-slate-500 font-mono">%</span>
+                        </div>
+                      </div>
+
+                      {/* Taxa de Desconto */}
+                      <div className="flex justify-between items-center bg-black/40 p-2.5 rounded border border-white/5 hover:border-white/10 transition-colors">
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs text-slate-400">Taxa de desconto</span>
+                          <div className="group relative">
+                            <Info className="w-3.5 h-3.5 text-slate-500 hover:text-white cursor-pointer" />
+                            <div className="absolute left-0 bottom-full mb-1 p-2 bg-black border border-white/10 text-[10px] text-slate-300 rounded shadow-xl hidden group-hover:block w-48 z-10">
+                              Custo de Capital Mínimo Esperado. Média histórica da Selic é de 11,53% (9,80% ex IR15%).
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={dcfDiscountRate}
+                            onChange={(e) => setDcfDiscountRate(parseFloat(e.target.value) || 0)}
+                            className="bg-black/80 border border-white/10 rounded px-2 py-1 text-xs text-white text-right w-20 focus:border-orange-500 outline-none font-mono"
+                          />
+                          <span className="text-[11px] text-slate-500 font-mono">%</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <p className="mt-4 text-[10px] text-slate-500 leading-relaxed bg-white/5 p-2 rounded border border-white/5">
+                      ℹ️ Média histórica da Selic é 11,53% (9,80% ex IR15%) para taxa de desconto semestral livre de risco.
+                    </p>
+                  </div>
+
+                  {/* Panel 2: Realidade Projetada */}
+                  {(() => {
+                    const vps: Record<number, number> = {};
+                    let sumVP = 0;
+
+                    const projYears = [2026, 2027, 2028];
+                    if (dcfProjectionYears === 5) {
+                      projYears.push(2029, 2030);
+                    }
+
+                    projYears.forEach((y, idx) => {
+                      const profit = dcfProjectedProfits[y] || 0;
+                      const discountFactor = Math.pow(1 + dcfDiscountRate / 100, idx + 1);
+                      const vp = profit / discountFactor;
+                      vps[y] = vp;
+                      sumVP += vp;
+                    });
+
+                    const lastYear = projYears[projYears.length - 1];
+                    const lastProfit = dcfProjectedProfits[lastYear] || 0;
+                    const denominator = (dcfDiscountRate - dcfPerpCrescimento) / 100;
+                    const perpProfitVal = denominator > 0 ? (lastProfit * (1 + dcfPerpCrescimento / 100)) / denominator : 0;
+                    const perpVPL = perpProfitVal / Math.pow(1 + dcfDiscountRate / 100, dcfProjectionYears);
+
+                    const totalValuationVal = sumVP + perpVPL;
+                    const precoPorAcaoVal = totalValuationVal / dcfSharesExTreasury;
+
+                    const currentAssetPrice = (() => {
+                      const stock = initialScreenerStocks.find(s => s.ticker === valuationParams.ticker);
+                      return stock ? stock.price : 11.27;
+                    })();
+                    const upsidePercent = ((precoPorAcaoVal - currentAssetPrice) / currentAssetPrice) * 100;
+
+                    return (
+                      <div className="bg-[#0b0b0b] border border-white/10 p-5 rounded font-mono">
+                        <h4 className="text-white text-xs uppercase tracking-widest font-bold mb-4 border-b border-white/5 pb-2">Realidade Projetada</h4>
+                        
+                        <div className="space-y-3.5">
+                          <div className="flex justify-between items-center text-xs">
+                            <span className="text-slate-400">Market cap justo</span>
+                            <span className="text-white font-bold">{rFormat(totalValuationVal)}</span>
+                          </div>
+
+                          <div className="flex justify-between items-center text-xs">
+                            <span className="text-slate-400">Nº total de ações</span>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="number"
+                                value={dcfTotalShares}
+                                onChange={(e) => setDcfTotalShares(parseInt(e.target.value) || 0)}
+                                className="bg-black/60 border border-white/10 rounded px-2 py-0.5 text-xs text-white text-right w-32 focus:border-orange-500 outline-none font-mono"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex justify-between items-center text-xs">
+                            <span className="text-slate-400">Nº ações ex-tesouraria</span>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="number"
+                                value={dcfSharesExTreasury}
+                                onChange={(e) => setDcfSharesExTreasury(parseInt(e.target.value) || 0)}
+                                className="bg-black/60 border border-white/10 rounded px-2 py-0.5 text-xs text-white text-right w-32 focus:border-orange-500 outline-none font-mono"
+                              />
+                            </div>
+                          </div>
+
+                          <hr className="border-white/5 my-2" />
+
+                          <div className="flex justify-between items-center p-2 rounded bg-blue-900/20 border border-blue-500/20">
+                            <span className="text-xs text-blue-400 font-bold">Preço por ação</span>
+                            <span className="text-sm font-black text-blue-400">{rFormat(precoPorAcaoVal)}</span>
+                          </div>
+
+                          <div className="flex justify-between items-center p-2 rounded bg-black/40 text-xs">
+                            <span className="text-slate-400">Cotação p/ Comparação</span>
+                            <span className="text-xs font-bold text-white">R$ {currentAssetPrice.toFixed(2)}</span>
+                          </div>
+
+                          <div className="flex justify-between items-center p-2 rounded bg-emerald-950/20 border border-emerald-500/20 text-xs">
+                            <span className="text-xs text-emerald-400 font-bold">Upside / Downside</span>
+                            <span className={`text-xs font-black ${upsidePercent >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                              {upsidePercent >= 0 ? "+" : ""}{upsidePercent.toFixed(2)}%
+                            </span>
+                          </div>
+
+                          <div className="mt-5 grid grid-cols-2 gap-2 pt-2 border-t border-white/5">
+                            <button
+                              onClick={() => {
+                                const savedData = { dcfPayout, dcfRoe, dcfGrowthRate, dcfDiscountRate, dcfProjectionYears, totalValuationVal, precoPorAcaoVal };
+                                localStorage.setItem("b3_saved_dcf_pro", JSON.stringify(savedData));
+                                alert(`Fluxo de Caixa Descontado Salvo! Preço Justo Calculado: ${rFormat(precoPorAcaoVal)}`);
+                              }}
+                              className="flex items-center justify-center gap-1 bg-orange-600 hover:bg-orange-700 text-black text-[10px] uppercase font-bold py-2 px-3 rounded transition-all"
+                            >
+                              <Save className="w-3.5 h-3.5" />
+                              Salvar Teto
+                            </button>
+                            <button
+                              onClick={() => {
+                                setDcfPayout(68.84);
+                                setDcfRoe(16.75);
+                                setDcfGrowthRate(5.22);
+                                setDcfDiscountRate(14.50);
+                                setDcfProjectionYears(3);
+                                setDcfTotalShares(2861782000);
+                                setDcfSharesExTreasury(2860682000);
+                                setDcfProjectedProfits({
+                                  2026: 4000000000,
+                                  2027: 4208800000,
+                                  2028: 4428499360,
+                                  2029: 4659667026,
+                                  2030: 4902901645
+                                });
+                                setDcfPerpCrescimento(3.0);
+                              }}
+                              className="border border-white/10 hover:bg-white/5 text-slate-400 hover:text-white text-[10px] uppercase font-bold py-2 px-3 rounded transition-all font-mono"
+                            >
+                              Reset
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* Right Column: Fluxo de Caixa Descontado Table */}
+                <div className="lg:col-span-8 bg-[#0b0b0b] border border-white/10 p-5 rounded font-mono">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-5 border-b border-white/5 pb-3">
+                    <h4 className="text-white text-xs uppercase tracking-widest font-bold font-mono">Fluxo de Caixa Descontado</h4>
+                    
+                    {/* Selector years */}
+                    <div className="flex bg-white/5 border border-white/10 rounded p-0.5">
+                      <button
+                        onClick={() => setDcfProjectionYears(3)}
+                        className={`text-[10px] px-3 py-1 rounded transition-all font-bold ${dcfProjectionYears === 3 ? "bg-orange-600 text-black shadow" : "text-slate-400 hover:text-white"} font-mono`}
+                      >
+                        3 anos
+                      </button>
+                      <button
+                        onClick={() => setDcfProjectionYears(5)}
+                        className={`text-[10px] px-3 py-1 rounded transition-all font-bold ${dcfProjectionYears === 5 ? "bg-orange-600 text-black shadow" : "text-slate-400 hover:text-white"} font-mono`}
+                      >
+                        5 anos
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs font-mono">
+                      <thead>
+                        <tr className="border-b border-white/10 text-slate-500 uppercase tracking-wider text-[10px] font-mono">
+                          <th className="pb-2 text-center w-14">Ano</th>
+                          <th className="pb-2 text-right">Lucro Líquido</th>
+                          <th className="pb-2 text-right">Crescimento</th>
+                          <th className="pb-2 text-right">VPL</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5 text-slate-300 font-mono">
+                        
+                        {/* Históricos */}
+                        {Object.entries({
+                          2021: 3752869000,
+                          2022: 4094367000,
+                          2023: 5766835000,
+                          2024: 7119287000,
+                          2025: 4899617000
+                        }).map(([yr, val]) => {
+                          let pctStr = "-";
+                          if (yr === "2021") pctStr = "30,98%";
+                          if (yr === "2022") pctStr = "9,10%";
+                          if (yr === "2023") pctStr = "40,85%";
+                          if (yr === "2024") pctStr = "23,45%";
+                          if (yr === "2025") pctStr = "-31,18%";
+
+                          return (
+                            <tr key={yr} className="hover:bg-white/5 text-slate-500">
+                              <td className="py-3 font-bold text-center text-slate-500 font-mono">{yr}</td>
+                              <td className="py-3 text-right font-mono">{rFormat(val)}</td>
+                              <td className={`py-3 text-right font-mono ${pctStr.startsWith("-") ? "text-rose-600/70" : "text-emerald-600/70"}`}>{pctStr}</td>
+                              <td className="py-3 text-right font-bold text-slate-600 font-mono">-</td>
+                            </tr>
+                          );
+                        })}
+
+                        {/* Line break spacer */}
+                        <tr className="bg-white/5 h-0.5 border-none"><td colSpan={4}></td></tr>
+
+                        {/* Projetados */}
+                        {(() => {
+                          const years = [2026, 2027, 2028];
+                          if (dcfProjectionYears === 5) {
+                            years.push(2029, 2030);
+                          }
+
+                          return (
+                            <>
+                              {years.map((y, idx) => {
+                                const value = dcfProjectedProfits[y] || 0;
+                                
+                                let growthPct = dcfGrowthRate;
+                                if (y === 2026) {
+                                  growthPct = ((value - 4899617000) / 4899617000) * 100;
+                                } else {
+                                  const prevValue = dcfProjectedProfits[y - 1] || 1;
+                                  growthPct = ((value - prevValue) / prevValue) * 100;
+                                }
+
+                                const discountFactor = Math.pow(1 + dcfDiscountRate / 100, idx + 1);
+                                const vp = value / discountFactor;
+
+                                return (
+                                  <tr key={y} className="hover:bg-orange-500/5 transition-colors font-mono">
+                                    <td className="py-2 text-center font-bold text-orange-500 font-mono">{y}</td>
+                                    <td className="py-2 text-right font-mono">
+                                      <div className="inline-flex items-center gap-1.5 w-full justify-end font-mono">
+                                        <span className="text-[10px] text-slate-600 font-mono">R$</span>
+                                        <input
+                                          type="number"
+                                          value={value}
+                                          onChange={(e) => {
+                                            const numVal = parseInt(e.target.value) || 0;
+                                            setDcfProjectedProfits(prev => ({
+                                              ...prev,
+                                              [y]: numVal
+                                            }));
+                                          }}
+                                          className="bg-black/60 border border-white/10 rounded px-2 py-1 text-xs text-white text-right w-44 focus:border-orange-500 outline-none font-bold font-mono"
+                                        />
+                                      </div>
+                                    </td>
+                                    <td className={`py-2 text-right font-medium font-mono ${growthPct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                                      {growthPct >= 0 ? "+" : ""}{growthPct.toFixed(2)}%
+                                    </td>
+                                    <td className="py-2 text-right font-bold text-blue-400 font-mono">{rFormat(vp)}</td>
+                                  </tr>
+                                );
+                              })}
+
+                              {/* Perpetuidade */}
+                              {(() => {
+                                const lastYear = years[years.length - 1];
+                                const lastProfit = dcfProjectedProfits[lastYear] || 0;
+                                const denominator = (dcfDiscountRate - dcfPerpCrescimento) / 100;
+                                const perpProfitVal = denominator > 0 ? (lastProfit * (1 + dcfPerpCrescimento / 100)) / denominator : 0;
+                                const perpVPL = perpProfitVal / Math.pow(1 + dcfDiscountRate / 100, dcfProjectionYears);
+
+                                return (
+                                  <tr className="hover:bg-indigo-550/5 transition-colors bg-indigo-950/15 font-mono">
+                                    <td className="py-3 text-center font-bold text-indigo-400 font-mono">Perpétuo</td>
+                                    <td className="py-3 text-right text-indigo-300 font-bold font-mono">{rFormat(perpProfitVal)}</td>
+                                    <td className="py-2 text-right font-mono">
+                                      <div className="flex items-center justify-end gap-1.5 font-bold font-mono">
+                                        <button
+                                          onClick={() => setDcfPerpCrescimento(prev => Math.max(0, parseFloat((prev - 0.1).toFixed(2))))}
+                                          className="w-5 h-5 bg-white/5 rounded border border-white/10 hover:bg-white/10 text-slate-300 flex items-center justify-center font-bold text-xs font-mono"
+                                        >
+                                          -
+                                        </button>
+                                        <span className="text-white text-[11px] px-1 w-10 text-center font-mono">{dcfPerpCrescimento.toFixed(1)}%</span>
+                                        <button
+                                          onClick={() => setDcfPerpCrescimento(prev => parseFloat((prev + 0.1).toFixed(2)))}
+                                          className="w-5 h-5 bg-white/5 rounded border border-white/10 hover:bg-white/10 text-slate-300 flex items-center justify-center font-bold text-xs font-mono"
+                                        >
+                                          +
+                                        </button>
+                                      </div>
+                                    </td>
+                                    <td className="py-3 text-right font-black text-emerald-400 font-mono">{rFormat(perpVPL)}</td>
+                                  </tr>
+                                );
+                              })()}
+                            </>
+                          );
+                        })()}
+
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="mt-6 border-t border-white/5 pt-4 flex flex-col sm:flex-row justify-between items-center text-slate-500 text-xs font-mono">
+                    <span>
+                      💡 Nota: Os lucros projetados dos anos de estimativa podem ser modificados digitando novos valores.
+                    </span>
+                    <span className="font-semibold text-orange-500 font-mono">B3-Quant FCDE Model</span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1938,6 +2423,70 @@ export default function App() {
           <div className="space-y-6">
             <p className="text-[10px] uppercase tracking-[0.25em] text-orange-500 font-bold font-mono">VALUATION_PROJECTIVE_PRICE_CEILING</p>
             
+            {/* Seletor de Ativo para Precificação */}
+            <div className="bg-[#0b0b0b] border border-white/10 p-4 rounded flex flex-col sm:flex-row sm:items-center justify-between gap-4 font-mono select-none">
+              <div>
+                <span className="text-[10px] text-orange-500 uppercase tracking-widest font-bold">VALUATION_ASSET_SITUATIONAL_CONTEXT</span>
+                <h4 className="text-white text-xs font-bold mt-1">Análise de Preço Teto para o Ativo: <span className="text-orange-500 font-black">{valuationParams.ticker}</span></h4>
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  value={valuationParams.ticker}
+                  onChange={(e) => {
+                    const ticker = e.target.value;
+                    const isFii = ticker.endsWith("11");
+                    if (isFii) {
+                      const fii = initialScreenerFIIs.find(f => f.ticker === ticker);
+                      if (fii) {
+                        const calculatedVpa = fii.vpv > 0 ? fii.price / fii.vpv : fii.price;
+                        const dpa = (fii.price * fii.divYield) / 100;
+                        setValuationParams({
+                          ...valuationParams,
+                          ticker: fii.ticker,
+                          lpa: 0,
+                          vpa: calculatedVpa,
+                          dpa: dpa,
+                          currentDividend: dpa,
+                          gordonGrowth: 1.5,
+                          gordonDiscount: 8.5,
+                          requiredYield: 8.0,
+                        });
+                        setPtCurrentPrice(fii.price);
+                      }
+                    } else {
+                      const stock = initialScreenerStocks.find(s => s.ticker === ticker);
+                      if (stock) {
+                        setValuationParams({
+                          ...valuationParams,
+                          ticker: stock.ticker,
+                          lpa: stock.lpa || 3.38,
+                          vpa: stock.vpa || 47.92,
+                          dpa: (stock.price * stock.divYield) / 100,
+                          currentDividend: (stock.price * stock.divYield) / 100,
+                          gordonGrowth: stock.growthRate || 3.0,
+                          gordonDiscount: 14.5,
+                          requiredYield: 6.0,
+                        });
+                        setPtCurrentPrice(stock.price);
+                      }
+                    }
+                  }}
+                  className="bg-black border border-white/10 rounded p-2 text-xs text-white uppercase outline-none focus:border-orange-500 font-mono"
+                >
+                  <optgroup label="Ações">
+                    {initialScreenerStocks.map(s => (
+                      <option key={s.ticker} value={s.ticker}>{s.ticker} - {s.name}</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Fundos Imobiliários (FIIs)">
+                    {initialScreenerFIIs.map(f => (
+                      <option key={f.ticker} value={f.ticker}>{f.ticker} - {f.name}</option>
+                    ))}
+                  </optgroup>
+                </select>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
               
               {/* Left Column: Sidebar Preço Teto */}
@@ -1958,90 +2507,167 @@ export default function App() {
                 </div>
 
                 <div className="space-y-4">
-                  {/* Dividend Yield desejado */}
-                  <div className="p-3 bg-black/40 rounded border border-white/5 space-y-2">
-                    <label className="text-[10px] uppercase tracking-wider text-slate-400">Dividend Yield desejado</label>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center bg-black border border-white/10 rounded px-2 py-1 flex-1 max-w-[120px]">
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={ptDesiredYield}
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value) || 0;
-                            setPtDesiredYield(val);
-                            setPtProjectionFactor(val); // Sincroniza conforme lógica mapeada do seletor duplo na Imagem 2
-                          }}
-                          className="bg-transparent text-white text-sm font-bold text-center w-full focus:outline-none"
-                        />
-                        <span className="text-slate-500 font-bold">%</span>
+                  {valuationParams.ticker.endsWith("11") ? (
+                    <>
+                      {/* Rendimento Mensal do FII */}
+                      <div className="p-3 bg-black/40 rounded border border-white/5 space-y-2">
+                        <label className="text-[10px] uppercase tracking-wider text-slate-400">Rendimento Mensal por Cota</label>
+                        <div className="flex items-center gap-1.5 bg-black border border-white/10 rounded px-2 py-1">
+                          <span className="text-slate-500 text-xs font-bold">R$</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={parseFloat((valuationParams.dpa / 12).toFixed(2))}
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value) || 0;
+                              setValuationParams({ ...valuationParams, dpa: val * 12 });
+                            }}
+                            className="bg-transparent text-white text-xs font-bold w-full focus:outline-none"
+                          />
+                        </div>
                       </div>
-                      <span className="text-xs text-slate-400 text-right">Yield Alvo</span>
-                    </div>
-                  </div>
 
-                  {/* Payout da empresa */}
-                  <div className="p-3 bg-black/40 rounded border border-white/5 space-y-2">
-                    <label className="text-[10px] uppercase tracking-wider text-slate-400">Payout da empresa</label>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center bg-black border border-white/10 rounded px-2 py-1 flex-1 max-w-[120px]">
-                        <input
-                          type="number"
-                          step="1"
-                          value={ptPayout}
-                          onChange={(e) => setPtPayout(parseFloat(e.target.value) || 0)}
-                          className="bg-transparent text-white text-sm font-bold text-center w-full focus:outline-none"
-                        />
-                        <span className="text-slate-500 font-bold">%</span>
+                      {/* Dividend Yield desejado */}
+                      <div className="p-3 bg-black/40 rounded border border-white/5 space-y-2">
+                        <label className="text-[10px] uppercase tracking-wider text-slate-400">Dividend Yield desejado</label>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center bg-black border border-white/10 rounded px-2 py-1 flex-1 max-w-[120px]">
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={ptDesiredYield}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value) || 0;
+                                setPtDesiredYield(val);
+                                setPtProjectionFactor(val);
+                              }}
+                              className="bg-transparent text-white text-sm font-bold text-center w-full focus:outline-none"
+                            />
+                            <span className="text-slate-500 font-bold">%</span>
+                          </div>
+                          <span className="text-xs text-slate-400 text-right">Yield Alvo</span>
+                        </div>
                       </div>
-                      <span className="text-xs text-slate-400 text-right">Distribuição</span>
-                    </div>
-                  </div>
 
-                  {/* Lucro Projetivo */}
-                  <div className="p-3 bg-[#0c0c0c] rounded border border-white/5 space-y-2">
-                    <label className="text-[10px] uppercase tracking-wider text-slate-400">Lucro Projetivo</label>
-                    <div className="flex items-center gap-1.5 bg-black border border-white/10 rounded px-2 py-1">
-                      <span className="text-slate-500 text-xs font-bold">R$</span>
-                      <input
-                        type="number"
-                        value={ptProjectiveProfit}
-                        onChange={(e) => setPtProjectiveProfit(parseInt(e.target.value) || 0)}
-                        className="bg-transparent text-white text-xs font-bold w-full focus:outline-none"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Projeção (Growth factor) */}
-                  <div className="p-3 bg-black/40 rounded border border-white/5 space-y-2">
-                    <label className="text-[10px] uppercase tracking-wider text-slate-400">Projeção</label>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1 bg-black border border-white/10 rounded p-1 w-[120px] justify-between">
-                        <button
-                          onClick={() => {
-                            const val = parseFloat((ptProjectionFactor - 0.25).toFixed(2));
-                            setPtProjectionFactor(val);
-                            setPtDesiredYield(val); // Sincroniza com seletor esquerdo
-                          }}
-                          className="w-6 h-6 bg-white/5 rounded hover:bg-white/10 text-slate-300 flex items-center justify-center font-bold text-sm"
-                        >
-                          -
-                        </button>
-                        <span className="text-white text-xs px-1 font-bold">{ptProjectionFactor.toFixed(2)}%</span>
-                        <button
-                          onClick={() => {
-                            const val = parseFloat((ptProjectionFactor + 0.25).toFixed(2));
-                            setPtProjectionFactor(val);
-                            setPtDesiredYield(val); // Sincroniza com seletor esquerdo
-                          }}
-                          className="w-6 h-6 bg-white/5 rounded hover:bg-white/10 text-slate-300 flex items-center justify-center font-bold text-sm"
-                        >
-                          +
-                        </button>
+                      {/* Projeção (Growth factor) */}
+                      <div className="p-3 bg-black/40 rounded border border-white/5 space-y-2">
+                        <label className="text-[10px] uppercase tracking-wider text-slate-400">Projeção de Crescimento do FII</label>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1 bg-black border border-white/10 rounded p-1 w-[120px] justify-between">
+                            <button
+                              onClick={() => {
+                                const val = parseFloat((ptProjectionFactor - 0.25).toFixed(2));
+                                setPtProjectionFactor(val);
+                                setPtDesiredYield(val);
+                              }}
+                              className="w-6 h-6 bg-white/5 rounded hover:bg-white/10 text-slate-300 flex items-center justify-center font-bold text-sm"
+                            >
+                              -
+                            </button>
+                            <span className="text-white text-xs px-1 font-bold">{ptProjectionFactor.toFixed(2)}%</span>
+                            <button
+                              onClick={() => {
+                                const val = parseFloat((ptProjectionFactor + 0.25).toFixed(2));
+                                setPtProjectionFactor(val);
+                                setPtDesiredYield(val);
+                              }}
+                              className="w-6 h-6 bg-white/5 rounded hover:bg-white/10 text-slate-300 flex items-center justify-center font-bold text-sm"
+                            >
+                              +
+                            </button>
+                          </div>
+                          <span className="text-xs text-slate-400 text-right">Sincronizado</span>
+                        </div>
                       </div>
-                      <span className="text-xs text-slate-400 text-right">Sincronizado</span>
-                    </div>
-                  </div>
+                    </>
+                  ) : (
+                    <>
+                      {/* Dividend Yield desejado */}
+                      <div className="p-3 bg-black/40 rounded border border-white/5 space-y-2">
+                        <label className="text-[10px] uppercase tracking-wider text-slate-400">Dividend Yield desejado</label>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center bg-black border border-white/10 rounded px-2 py-1 flex-1 max-w-[120px]">
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={ptDesiredYield}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value) || 0;
+                                setPtDesiredYield(val);
+                                setPtProjectionFactor(val); // Sincroniza conforme lógica mapeada do seletor duplo na Imagem 2
+                              }}
+                              className="bg-transparent text-white text-sm font-bold text-center w-full focus:outline-none"
+                            />
+                            <span className="text-slate-500 font-bold">%</span>
+                          </div>
+                          <span className="text-xs text-slate-400 text-right">Yield Alvo</span>
+                        </div>
+                      </div>
+
+                      {/* Payout da empresa */}
+                      <div className="p-3 bg-black/40 rounded border border-white/5 space-y-2">
+                        <label className="text-[10px] uppercase tracking-wider text-slate-400">Payout da empresa</label>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center bg-black border border-white/10 rounded px-2 py-1 flex-1 max-w-[120px]">
+                            <input
+                              type="number"
+                              step="1"
+                              value={ptPayout}
+                              onChange={(e) => setPtPayout(parseFloat(e.target.value) || 0)}
+                              className="bg-transparent text-white text-sm font-bold text-center w-full focus:outline-none"
+                            />
+                            <span className="text-slate-500 font-bold">%</span>
+                          </div>
+                          <span className="text-xs text-slate-400 text-right">Distribuição</span>
+                        </div>
+                      </div>
+
+                      {/* Lucro Projetivo */}
+                      <div className="p-3 bg-[#0c0c0c] rounded border border-white/5 space-y-2">
+                        <label className="text-[10px] uppercase tracking-wider text-slate-400">Lucro Projetivo</label>
+                        <div className="flex items-center gap-1.5 bg-black border border-white/10 rounded px-2 py-1">
+                          <span className="text-slate-500 text-xs font-bold">R$</span>
+                          <input
+                            type="number"
+                            value={ptProjectiveProfit}
+                            onChange={(e) => setPtProjectiveProfit(parseInt(e.target.value) || 0)}
+                            className="bg-transparent text-white text-xs font-bold w-full focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Projeção (Growth factor) */}
+                      <div className="p-3 bg-black/40 rounded border border-white/5 space-y-2">
+                        <label className="text-[10px] uppercase tracking-wider text-slate-400">Projeção</label>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1 bg-black border border-white/10 rounded p-1 w-[120px] justify-between">
+                            <button
+                              onClick={() => {
+                                const val = parseFloat((ptProjectionFactor - 0.25).toFixed(2));
+                                setPtProjectionFactor(val);
+                                setPtDesiredYield(val); // Sincroniza com seletor esquerdo
+                              }}
+                              className="w-6 h-6 bg-white/5 rounded hover:bg-white/10 text-slate-300 flex items-center justify-center font-bold text-sm"
+                            >
+                              -
+                            </button>
+                            <span className="text-white text-xs px-1 font-bold">{ptProjectionFactor.toFixed(2)}%</span>
+                            <button
+                              onClick={() => {
+                                const val = parseFloat((ptProjectionFactor + 0.25).toFixed(2));
+                                setPtProjectionFactor(val);
+                                setPtDesiredYield(val); // Sincroniza com seletor esquerdo
+                              }}
+                              className="w-6 h-6 bg-white/5 rounded hover:bg-white/10 text-slate-300 flex items-center justify-center font-bold text-sm"
+                            >
+                              +
+                            </button>
+                          </div>
+                          <span className="text-xs text-slate-400 text-right">Sincronizado</span>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 <div className="mt-6 pt-4 border-t border-white/5 grid grid-cols-2 gap-2">
@@ -2073,13 +2699,24 @@ export default function App() {
               {/* Right Column: 6 Valuation Cards Grid */}
               <div className="lg:col-span-8 flex flex-col justify-between">
                 {(() => {
-                  // Calcular valores do Preço Teto Projetivo conforme Imagem 2
-                  // DPA (PROJETIVO) = Lucro Projetivo * Payout / Número de papéis (sem tesouraria)
-                  const totalProjectedDividends = ptProjectiveProfit * (ptPayout / 100);
-                  const dpaProjetivoVal = totalProjectedDividends / ptNumberOfShares;
-                  const precoTetoVal = dpaProjetivoVal / (ptDesiredYield / 100);
-                  const yieldProjetivoVal = (dpaProjetivoVal / ptCurrentPrice) * 100;
-                  const margemSegurancaVal = ((precoTetoVal - ptCurrentPrice) / ptCurrentPrice) * 100;
+                  const isFii = valuationParams.ticker.endsWith("11");
+                  let dpaProjetivoVal = 0;
+                  let precoTetoVal = 0;
+                  let yieldProjetivoVal = 0;
+                  let margemSegurancaVal = 0;
+
+                  if (isFii) {
+                    dpaProjetivoVal = valuationParams.dpa;
+                    precoTetoVal = dpaProjetivoVal / (ptDesiredYield / 100);
+                    yieldProjetivoVal = (dpaProjetivoVal / ptCurrentPrice) * 100;
+                    margemSegurancaVal = ((precoTetoVal - ptCurrentPrice) / ptCurrentPrice) * 100;
+                  } else {
+                    const totalProjectedDividends = ptProjectiveProfit * (ptPayout / 100);
+                    dpaProjetivoVal = totalProjectedDividends / ptNumberOfShares;
+                    precoTetoVal = dpaProjetivoVal / (ptDesiredYield / 100);
+                    yieldProjetivoVal = (dpaProjetivoVal / ptCurrentPrice) * 100;
+                    margemSegurancaVal = ((precoTetoVal - ptCurrentPrice) / ptCurrentPrice) * 100;
+                  }
 
                   return (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
@@ -2109,28 +2746,48 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* CARD 2: NÚMERO DE PAPÉIS */}
+                      {/* CARD 2: RECURSO PROJETIVO (NÚMERO DE PAPÉIS OU RENDIMENTO MENSAL) */}
                       <div className="bg-[#0b0b0b] border border-white/10 p-5 rounded font-mono flex flex-col justify-between relative">
-                        <div className="flex justify-between items-center mb-3">
-                          <span className="text-[10px] uppercase text-slate-400 tracking-wider">Número de Papéis</span>
-                          <div className="group relative">
-                            <Info className="w-3.5 h-3.5 text-slate-600 hover:text-white cursor-pointer" />
-                            <div className="absolute right-0 bottom-full mb-1 p-2 bg-black border border-white/10 text-[9px] text-slate-300 rounded shadow-xl hidden group-hover:block w-48 z-10 font-sans leading-relaxed">
-                              Quantidade de papéis em circulação para distribuição do dividendo de forma equilibrada.
+                        {isFii ? (
+                          <>
+                            <div className="flex justify-between items-center mb-3">
+                              <span className="text-[10px] uppercase text-slate-400 tracking-wider">Rend. Mensal Estimado</span>
+                              <div className="group relative">
+                                <Info className="w-3.5 h-3.5 text-slate-600 hover:text-white cursor-pointer" />
+                                <div className="absolute right-0 bottom-full mb-1 p-2 bg-black border border-white/10 text-[9px] text-slate-300 rounded shadow-xl hidden group-hover:block w-48 z-10 font-sans leading-relaxed">
+                                  Projeção do rendimento mensal distribuído por cada cota do FII.
+                                </div>
+                              </div>
                             </div>
-                          </div>
-                        </div>
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-1 bg-black/40 border border-white/5 px-2.5 py-1 rounded">
-                            <input
-                              type="number"
-                              value={ptNumberOfShares}
-                              onChange={(e) => setPtNumberOfShares(parseInt(e.target.value) || 0)}
-                              className="bg-transparent text-white text-base font-black focus:outline-none w-full text-right"
-                            />
-                          </div>
-                          <span className="text-[9px] text-slate-500 uppercase block pl-1">Sem tesouraria</span>
-                        </div>
+                            <div className="space-y-1">
+                              <p className="text-2xl font-black text-white">{rFormat(dpaProjetivoVal / 12)}</p>
+                              <span className="text-[9px] text-slate-500 uppercase block pl-1">Por cota</span>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex justify-between items-center mb-3">
+                              <span className="text-[10px] uppercase text-slate-400 tracking-wider">Número de Papéis</span>
+                              <div className="group relative">
+                                <Info className="w-3.5 h-3.5 text-slate-600 hover:text-white cursor-pointer" />
+                                <div className="absolute right-0 bottom-full mb-1 p-2 bg-black border border-white/10 text-[9px] text-slate-300 rounded shadow-xl hidden group-hover:block w-48 z-10 font-sans leading-relaxed">
+                                  Quantidade de papéis em circulação para distribuição do dividendo de forma equilibrada.
+                                </div>
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-1 bg-black/40 border border-white/5 px-2.5 py-1 rounded">
+                                <input
+                                  type="number"
+                                  value={ptNumberOfShares}
+                                  onChange={(e) => setPtNumberOfShares(parseInt(e.target.value) || 0)}
+                                  className="bg-transparent text-white text-base font-black focus:outline-none w-full text-right"
+                                />
+                              </div>
+                              <span className="text-[9px] text-slate-500 uppercase block pl-1">Sem tesouraria</span>
+                            </div>
+                          </>
+                        )}
                       </div>
 
                       {/* CARD 3: PREÇO TETO */}
@@ -2140,25 +2797,25 @@ export default function App() {
                           <div className="group relative">
                             <Info className="w-3.5 h-3.5 text-slate-600 hover:text-white cursor-pointer" />
                             <div className="absolute right-0 bottom-full mb-1 p-2 bg-black border border-white/10 text-[9px] text-slate-300 rounded shadow-xl hidden group-hover:block w-48 z-10 font-sans leading-relaxed">
-                              Preço máximo aceitável para entrada de posição garantindo o retorno mínimo exigido (Bazin/Graham).
+                              Preço máximo de compra aceitável para garantir o retorno anual (yield alvo) desejado.
                             </div>
                           </div>
                         </div>
                         <div className="space-y-1">
                           <p className="text-2xl font-black text-white">{rFormat(precoTetoVal)}</p>
-                          <span className="text-[9px] text-slate-400 uppercase">Preço Justo Projetado</span>
+                          <span className="text-[9px] text-slate-400 uppercase">Preço Máximo de Entrada</span>
                         </div>
                       </div>
 
                       {/* CARD 4: DPA (PROJETIVO) */}
                       <div className="bg-[#0b0b0b] border border-white/10 p-5 rounded font-mono flex flex-col justify-between relative">
                         <div className="flex justify-between items-center mb-2">
-                          <span className="text-[10px] uppercase text-slate-400 tracking-wider">DPA (Projetivo)</span>
+                          <span className="text-[10px] uppercase text-slate-400 tracking-wider">{isFii ? "Rendimento Anual" : "DPA (Projetivo)"}</span>
                           <Info className="w-3.5 h-3.5 text-slate-600" />
                         </div>
                         <div className="space-y-1">
                           <p className="text-2xl font-black text-white">{rFormat(dpaProjetivoVal)}</p>
-                          <span className="text-[9px] text-slate-500 uppercase">Dividendo por Ação Estimado</span>
+                          <span className="text-[9px] text-slate-500 uppercase">{isFii ? "Rendimento por Cota Projetado" : "Dividendo por Ação Estimado"}</span>
                         </div>
                       </div>
 
@@ -2184,7 +2841,7 @@ export default function App() {
                           <p className={`text-2xl font-black ${margemSegurancaVal >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                             {margemSegurancaVal.toFixed(2)}%
                           </p>
-                          <span className="text-[9px] text-slate-500 uppercase">Diferença de Valorização</span>
+                          <span className="text-[9px] text-slate-500 uppercase">Diferença para o Preço Teto</span>
                         </div>
                       </div>
 
@@ -3223,6 +3880,7 @@ export default function App() {
                       <th className="py-3 px-2 text-right">Margem Líquida</th>
                       <th className="py-3 px-2 text-right">ROE</th>
                       <th className="py-3 px-2 text-right">DL/EBITDA</th>
+                      <th className="py-3 px-2 text-center text-[#c084fc] font-bold" title="Score de sentimento das notícias gerado por IA">IA Score</th>
                       
                       {/* Valuation Column Highlights exactly like the image */}
                       <th className="bg-[#fefcbf] text-amber-950 font-bold text-center py-2.5 px-3 uppercase text-[9px] w-28 tracking-wide border-l border-white/10">
@@ -3237,6 +3895,7 @@ export default function App() {
                       <th className="bg-[#fff5f5] text-[#991b1b] font-bold text-center py-2.5 px-3 uppercase text-[9px] w-28 tracking-wide border-l border border-r border-white/10">
                         Valuation Joel
                       </th>
+                      <th className="py-3 px-2 text-center text-indigo-400 font-bold">Ações</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
@@ -3260,15 +3919,17 @@ export default function App() {
                           <td className="py-4 px-2 text-right"><div className="h-3 w-12 bg-white/10 rounded ml-auto"></div></td>
                           <td className="py-4 px-2 text-right"><div className="h-3 w-12 bg-white/10 rounded ml-auto"></div></td>
                           <td className="py-4 px-2 text-right"><div className="h-3 w-8 bg-white/10 rounded ml-auto"></div></td>
+                          <td className="py-4 px-2 text-center"><div className="h-3 w-10 bg-white/10 rounded mx-auto"></div></td>
                           <td className="py-4 px-3 bg-amber-500/5 border-l border-white/5"><div className="h-3.5 w-16 bg-white/10 rounded mx-auto"></div></td>
                           <td className="py-4 px-3 bg-blue-500/5 border-l border-white/5"><div className="h-3.5 w-16 bg-white/10 rounded mx-auto"></div></td>
                           <td className="py-4 px-3 bg-purple-500/5 border-l border-white/5"><div className="h-3.5 w-16 bg-white/10 rounded mx-auto"></div></td>
                           <td className="py-4 px-3 bg-rose-500/5 border-l border border-r border-white/5"><div className="h-3.5 w-16 bg-[#fff5f5]/10 rounded mx-auto"></div></td>
+                          <td className="py-4 px-2 text-center"><div className="h-3.5 w-16 bg-white/10 rounded mx-auto"></div></td>
                         </tr>
                       ))
                     ) : sortedAndFilteredStocks.length === 0 ? (
                       <tr>
-                        <td colSpan={15} className="py-8 text-center text-slate-500 font-sans">
+                        <td colSpan={17} className="py-8 text-center text-slate-500 font-sans">
                           Nenhuma ação encontrada para os filtros atuais.
                         </td>
                       </tr>
@@ -3289,102 +3950,181 @@ export default function App() {
                         else if (s.ticker === "VALE3") logoColor = "bg-[#a855f7]";
 
                         return (
-                          <tr key={idx} className="hover:bg-white/5 transition-all">
-                            <td className="py-3 px-3 text-center">
-                              <button
-                                onClick={() => toggleFavorite(s.ticker)}
-                                className="text-slate-500 hover:text-amber-400 focus:outline-none transition-colors"
+                          <React.Fragment key={idx}>
+                            <tr className="hover:bg-white/5 transition-all">
+                              <td className="py-3 px-3 text-center">
+                                <button
+                                  onClick={() => toggleFavorite(s.ticker)}
+                                  className="text-slate-500 hover:text-amber-400 focus:outline-none transition-colors"
+                                >
+                                  <Star className={`w-4 h-4 mx-auto ${isFav ? "fill-amber-400 text-amber-400" : "text-slate-600 hover:text-amber-500"}`} />
+                                </button>
+                              </td>
+
+                              <td className="py-2 px-3 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedCompareTickers.includes(s.ticker)}
+                                  disabled={!selectedCompareTickers.includes(s.ticker) && selectedCompareTickers.length >= 3}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedCompareTickers(prev => [...prev, s.ticker]);
+                                    } else {
+                                      setSelectedCompareTickers(prev => prev.filter(t => t !== s.ticker));
+                                    }
+                                  }}
+                                  className="rounded-sm bg-black border-white/20 text-[#a855f7] focus:ring-0 cursor-pointer"
+                                />
+                              </td>
+                              
+                              <td className="py-3 px-1 text-slate-400 font-sans">
+                                #{idx + 1}
+                              </td>
+                              
+                              <td 
+                                onClick={() => setTickerHistoryToShow(tickerHistoryToShow === s.ticker ? null : s.ticker)}
+                                className="py-3 px-2 font-mono flex items-center gap-2 cursor-pointer hover:bg-white/5 rounded transition-all group"
+                                title="Clique para ver o gráfico de histórico de preço de 12 meses"
                               >
-                                <Star className={`w-4 h-4 mx-auto ${isFav ? "fill-amber-400 text-amber-400" : "text-slate-600 hover:text-amber-500"}`} />
-                              </button>
-                            </td>
+                                <div className={`w-5 h-5 rounded-full ${logoColor} text-[8px] flex items-center justify-center font-bold text-black border border-white/10 shrink-0`}>
+                                  {s.ticker.slice(0, 3)}
+                                </div>
+                                <div className="flex flex-col">
+                                  <span className="font-bold text-white text-orange-500 group-hover:underline flex items-center gap-1">
+                                    {s.ticker}
+                                    <span className="text-[9px] text-slate-500 font-sans group-hover:text-amber-400">📊</span>
+                                  </span>
+                                  <span className="text-[9px] text-slate-450 font-sans truncate max-w-[110px]">{s.name}</span>
+                                </div>
+                              </td>
 
-                            <td className="py-2 px-3 text-center">
-                              <input
-                                type="checkbox"
-                                checked={selectedCompareTickers.includes(s.ticker)}
-                                disabled={!selectedCompareTickers.includes(s.ticker) && selectedCompareTickers.length >= 3}
-                                onChange={(e) => {
-                                  if (e.target.checked) {
-                                    setSelectedCompareTickers(prev => [...prev, s.ticker]);
-                                  } else {
-                                    setSelectedCompareTickers(prev => prev.filter(t => t !== s.ticker));
-                                  }
-                                }}
-                                className="rounded-sm bg-black border-white/20 text-[#a855f7] focus:ring-0 cursor-pointer"
-                              />
-                            </td>
-                            
-                            <td className="py-3 px-1 text-slate-400 font-sans">
-                              #{idx + 1}
-                            </td>
-                            
-                            <td className="py-3 px-2 font-mono flex items-center gap-2">
-                              <div className={`w-5 h-5 rounded-full ${logoColor} text-[8px] flex items-center justify-center font-bold text-black border border-white/10 shrink-0`}>
-                                {s.ticker.slice(0, 3)}
-                              </div>
-                              <div className="flex flex-col">
-                                <span className="font-bold text-white text-orange-500">{s.ticker}</span>
-                                <span className="text-[9px] text-slate-400 font-sans truncate max-w-[110px]">{s.name}</span>
-                              </div>
-                            </td>
-
-                            <td className="py-3 px-2 text-right font-bold text-white font-mono">{rFormat(s.price)}</td>
-                            <td className={`py-3 px-2 text-right font-mono font-bold ${((s as any).var12m || 0) >= 0 ? "text-emerald-400" : "text-rose-500"}`}>
-                              {((s as any).var12m || 0) >= 0 ? "+" : ""}{((s as any).var12m || 0).toFixed(2)}%
-                            </td>
-                            <td className="py-3 px-2 text-right text-emerald-400 font-mono font-bold">{s.divYield.toFixed(2)}%</td>
-                            <td className="py-3 px-2 text-right text-orange-500 font-mono">{s.pl.toFixed(2)}</td>
-                            <td className="py-3 px-2 text-right text-slate-300 font-mono">{s.netMargin.toFixed(2)}%</td>
-                            <td className="py-3 px-2 text-right text-emerald-400 font-mono">{s.roe.toFixed(2)}%</td>
-                            <td className="py-3 px-2 text-right text-slate-300 font-mono">{s.dlEbitda.toFixed(2)}</td>
-                            
-                            {/* Calculation cell highlights matching the image color tones */}
-                            <td className="py-3 px-3 text-center bg-amber-500/5 border-l border-white/5">
-                              <span className="font-bold text-amber-300 font-mono">{rFormat(bazinVal)}</span>
+                              <td className="py-3 px-2 text-right font-bold text-white font-mono">{rFormat(s.price)}</td>
+                              <td className={`py-3 px-2 text-right font-mono font-bold ${((s as any).var12m || 0) >= 0 ? "text-emerald-400" : "text-rose-500"}`}>
+                                {((s as any).var12m || 0) >= 0 ? "+" : ""}{((s as any).var12m || 0).toFixed(2)}%
+                              </td>
+                              <td className="py-3 px-2 text-right text-emerald-400 font-mono font-bold">{s.divYield.toFixed(2)}%</td>
+                              <td className="py-3 px-2 text-right text-orange-500 font-mono">{s.pl.toFixed(2)}</td>
+                              <td className="py-3 px-2 text-right text-slate-300 font-mono">{s.netMargin.toFixed(2)}%</td>
+                              <td className="py-3 px-2 text-right text-emerald-400 font-mono">{s.roe.toFixed(2)}%</td>
+                              <td className="py-3 px-2 text-right text-slate-300 font-mono">{s.dlEbitda.toFixed(2)}</td>
+                              
+                              {/* Sentiment column via custom icons */}
                               {(() => {
-                                const bazinSafety = bazinVal > 0 ? ((bazinVal - s.price) / bazinVal) * 100 : 0;
+                                const tickerNews = newsList.filter(n => n.ticker === s.ticker);
+                                let sentiment: "Positive" | "Neutral" | "Negative" = "Neutral";
+                                if (tickerNews.length > 0) {
+                                  const positives = tickerNews.filter(n => n.sentiment === "Positive").length;
+                                  const negatives = tickerNews.filter(n => n.sentiment === "Negative").length;
+                                  if (positives > negatives) sentiment = "Positive";
+                                  else if (negatives > positives) sentiment = "Negative";
+                                } else {
+                                  const fallbackSentiments: Record<string, "Positive" | "Neutral" | "Negative"> = {
+                                    CMIG4: "Positive",
+                                    CMIN3: "Positive",
+                                    ISAE4: "Neutral",
+                                    WEGE3: "Positive",
+                                    JBSS3: "Positive",
+                                    BBDC4: "Neutral",
+                                    ABEV3: "Negative"
+                                  };
+                                  sentiment = fallbackSentiments[s.ticker] || "Neutral";
+                                }
+
+                                const sentimentStyles = {
+                                  Positive: { icon: Smile, text: "Positivo", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" },
+                                  Neutral: { icon: Meh, text: "Neutro", color: "text-amber-400 bg-amber-500/10 border-amber-500/20" },
+                                  Negative: { icon: Frown, text: "Negativo", color: "text-rose-400 bg-rose-500/10 border-rose-500/20" }
+                                }[sentiment];
+
+                                const SentimentIcon = sentimentStyles.icon;
+
                                 return (
-                                  <div className="mt-1 w-24 mx-auto flex flex-col gap-0.5">
-                                    <div className="h-1 w-full bg-white/10 rounded-full overflow-hidden relative">
-                                      <div 
-                                        className={`h-full rounded-full transition-all duration-300 ${bazinSafety > 0 ? "bg-emerald-500" : "bg-rose-500"}`}
-                                        style={{ width: `${Math.max(2, Math.min(Math.abs(bazinSafety), 100))}%` }}
-                                      />
-                                    </div>
-                                    <span className={`text-[8.5px] font-mono block leading-none text-center ${bazinSafety > 0 ? "text-emerald-400 font-bold" : "text-rose-400"}`}>
-                                      MS: {bazinSafety > 0 ? "+" : ""}{bazinSafety.toFixed(0)}%
+                                  <td className="py-3 px-2 text-center">
+                                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-bold ${sentimentStyles.color}`}>
+                                      <SentimentIcon className="w-3 h-3 shrink-0" />
+                                      <span>{sentimentStyles.text}</span>
                                     </span>
-                                  </div>
+                                  </td>
                                 );
                               })()}
-                            </td>
-                            <td className="py-3 px-3 text-center bg-blue-500/5 border-l border-white/5">
-                              <span className="font-bold text-blue-300 font-mono">{grahamVal ? rFormat(grahamVal) : "R$ 0,00"}</span>
-                              {(() => {
-                                const grahamSafety = grahamVal > 0 ? ((grahamVal - s.price) / grahamVal) * 100 : 0;
-                                return (
-                                  <div className="mt-1 w-24 mx-auto flex flex-col gap-0.5">
-                                    <div className="h-1 w-full bg-white/10 rounded-full overflow-hidden relative">
-                                      <div 
-                                        className={`h-full rounded-full transition-all duration-300 ${grahamSafety > 0 ? "bg-emerald-500" : "bg-rose-500"}`}
-                                        style={{ width: `${Math.max(2, Math.min(Math.abs(grahamSafety), 100))}%` }}
-                                      />
+
+                              {/* Calculation cell highlights matching the image color tones */}
+                              <td className="py-3 px-3 text-center bg-amber-500/5 border-l border-white/5">
+                                <span className="font-bold text-amber-300 font-mono">{rFormat(bazinVal)}</span>
+                                {(() => {
+                                  const bazinSafety = bazinVal > 0 ? ((bazinVal - s.price) / bazinVal) * 100 : 0;
+                                  return (
+                                    <div className="mt-1 w-24 mx-auto flex flex-col gap-0.5">
+                                      <div className="h-1 w-full bg-white/10 rounded-full overflow-hidden relative">
+                                        <div 
+                                          className={`h-full rounded-full transition-all duration-300 ${bazinSafety > 0 ? "bg-emerald-500" : "bg-rose-500"}`}
+                                          style={{ width: `${Math.max(2, Math.min(Math.abs(bazinSafety), 100))}%` }}
+                                        />
+                                      </div>
+                                      <span className={`text-[8.5px] font-mono block leading-none text-center ${bazinSafety > 0 ? "text-emerald-400 font-bold" : "text-rose-400"}`}>
+                                        MS: {bazinSafety > 0 ? "+" : ""}{bazinSafety.toFixed(0)}%
+                                      </span>
                                     </div>
-                                    <span className={`text-[8.5px] font-mono block leading-none text-center ${grahamSafety > 0 ? "text-emerald-400 font-bold" : "text-rose-400"}`}>
-                                      MS: {grahamSafety > 0 ? "+" : ""}{grahamSafety.toFixed(0)}%
-                                    </span>
+                                  );
+                                })()}
+                              </td>
+                              <td className="py-3 px-3 text-center bg-blue-500/5 border-l border-white/5">
+                                <span className="font-bold text-blue-300 font-mono">{grahamVal ? rFormat(grahamVal) : "R$ 0,00"}</span>
+                                {(() => {
+                                  const grahamSafety = grahamVal > 0 ? ((grahamVal - s.price) / grahamVal) * 100 : 0;
+                                  return (
+                                    <div className="mt-1 w-24 mx-auto flex flex-col gap-0.5">
+                                      <div className="h-1 w-full bg-white/10 rounded-full overflow-hidden relative">
+                                        <div 
+                                          className={`h-full rounded-full transition-all duration-300 ${grahamSafety > 0 ? "bg-emerald-500" : "bg-rose-500"}`}
+                                          style={{ width: `${Math.max(2, Math.min(Math.abs(grahamSafety), 100))}%` }}
+                                        />
+                                      </div>
+                                      <span className={`text-[8.5px] font-mono block leading-none text-center ${grahamSafety > 0 ? "text-emerald-400 font-bold" : "text-rose-400"}`}>
+                                        MS: {grahamSafety > 0 ? "+" : ""}{grahamSafety.toFixed(0)}%
+                                      </span>
+                                    </div>
+                                  );
+                                })()}
+                              </td>
+                              <td className="py-3 px-3 text-center font-bold text-purple-300 bg-purple-500/5 font-mono border-l border-white/5">
+                                {lynchVal.toFixed(2)}
+                              </td>
+                              <td className="py-3 px-3 text-center font-bold text-rose-300 bg-rose-500/5 font-mono border-l border border-r border-white/5">
+                                {joelScoreVal.toFixed(2)}%
+                              </td>
+                              
+                              {/* Criar Alerta Action Column */}
+                              <td className="py-3 px-2 text-center">
+                                <button
+                                  onClick={() => {
+                                    setNewAlert({ ticker: s.ticker, metric: "Price", condition: "Greater than", value: String(Math.round(s.price * 1.1)) });
+                                    setActiveTab("alerts_config");
+                                  }}
+                                  className="bg-indigo-600/10 hover:bg-indigo-600/30 text-indigo-400 hover:text-indigo-300 border border-indigo-500/20 hover:border-indigo-500/40 font-bold text-[10px] px-2 py-1 rounded transition-all flex items-center gap-1 mx-auto"
+                                  title={`Criar alerta de preço para ${s.ticker}`}
+                                >
+                                  <Bell className="w-3 h-3 shrink-0" />
+                                  <span>Criar Alerta</span>
+                                </button>
+                              </td>
+                            </tr>
+
+                            {/* Collapse 12-Month Price History Chart Row */}
+                            {tickerHistoryToShow === s.ticker && (
+                              <tr className="bg-black/60">
+                                <td colSpan={17} className="p-4 border-b border-white/10">
+                                  <div className="max-w-4xl mx-auto">
+                                    <Stock12mPriceHistoryChart 
+                                      ticker={s.ticker} 
+                                      currentPrice={s.price} 
+                                      var12m={((s as any).var12m || 0)} 
+                                    />
                                   </div>
-                                );
-                              })()}
-                            </td>
-                            <td className="py-3 px-3 text-center font-bold text-purple-300 bg-purple-500/5 font-mono border-l border-white/5">
-                              {lynchVal.toFixed(2)}
-                            </td>
-                            <td className="py-3 px-3 text-center font-bold text-rose-300 bg-rose-500/5 font-mono border-l border border-r border-white/5">
-                              {joelScoreVal.toFixed(2)}%
-                            </td>
-                          </tr>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
                         );
                       })
                     )}
@@ -3962,32 +4702,78 @@ export default function App() {
                 <div>
                   <div className="flex justify-between items-center mb-4 border-b border-white/5 pb-2">
                     <h4 className="text-white text-xs uppercase tracking-widest font-bold">Edição de Estudos - {selectedThesis.ticker}</h4>
-                    <button
-                      onClick={handleUpdateThesis}
-                      className="bg-orange-600 hover:bg-orange-500 text-black font-bold text-xs uppercase px-3 py-1.5 rounded transition-all"
-                    >
-                      Salvar tese de estudos
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleUpdateThesis}
+                        className="bg-orange-600 hover:bg-orange-500 text-black font-bold text-xs uppercase px-3 py-1.5 rounded transition-all cursor-pointer"
+                      >
+                        Salvar Tese
+                      </button>
+                      <button
+                        onClick={handleExportPdf}
+                        className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs uppercase px-3 py-1.5 rounded transition-all flex items-center gap-1.5 cursor-pointer"
+                        title="Exportar Relatório e Tese em PDF formatado"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Exportar PDF</span>
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="space-y-4">
-                    <textarea
-                      value={thesisText}
-                      onChange={(e) => setThesisText(e.target.value)}
-                      rows={10}
-                      className="w-full bg-black border border-white/10 rounded p-3 text-xs text-white outline-none focus:border-orange-500/50 leading-relaxed font-mono"
-                    />
+                  {/* Wrapper container for PDF rendering */}
+                  <div ref={thesisReportRef} className="p-4 bg-[#0b0b0b] rounded-lg border border-white/5 space-y-4">
+                    <div className="border-b border-white/10 pb-3">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="text-[9px] uppercase tracking-widest text-orange-500 font-bold">B3-Quant IA Investment Report</p>
+                          <h3 className="text-white text-base font-bold uppercase">Relatório de Análise Técnica & Fundamentalista</h3>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-xs bg-white/5 px-2..5 py-1 rounded font-mono font-bold text-cyan-400">{selectedThesis.ticker}</span>
+                        </div>
+                      </div>
+                      <p className="text-[9.5px] text-slate-500 mt-1">Gerado automaticamente por B3-Quant Advisor em {new Date().toLocaleDateString('pt-BR')}</p>
+                    </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-white/5 text-xs">
+                    {/* Interactive 12m Stock Price Chart integrated directly inside the thesis */}
+                    <div className="bg-black/35 border border-white/5 rounded p-3">
+                      <p className="text-[10px] text-amber-500 uppercase font-bold mb-2">Desempenho Histórico Recente (12m)</p>
+                      <div className="w-full">
+                        {(() => {
+                          const matchedStock = initialScreenerStocks.find(s => s.ticker === selectedThesis.ticker);
+                          const priceVal = matchedStock ? matchedStock.price : (selectedThesis.fairPrice || 50);
+                          const varVal = matchedStock ? ((matchedStock as any).var12m || 14.8) : 14.8;
+                          return (
+                            <Stock12mPriceHistoryChart 
+                              ticker={selectedThesis.ticker} 
+                              currentPrice={priceVal} 
+                              var12m={varVal} 
+                            />
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className="text-[10px] text-[#a855f7] uppercase font-bold">Tese de Investimento (Editável)</p>
+                      <textarea
+                        value={thesisText}
+                        onChange={(e) => setThesisText(e.target.value)}
+                        rows={8}
+                        className="w-full bg-black border border-white/10 rounded p-3 text-xs text-white outline-none focus:border-orange-500/50 leading-relaxed font-mono resize-none"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 border-t border-white/5 text-xs">
                       <div className="space-y-2">
                         <span className="text-[10px] text-emerald-400 uppercase font-bold block">💎 Vetores de Alta (Catalisadores)</span>
-                        <ul className="space-y-1 list-disc list-inside text-slate-400">
+                        <ul className="space-y-1 list-disc list-inside text-slate-400 text-[11px]">
                           {selectedThesis.catalysts.map((c, i) => <li key={i}>{c}</li>)}
                         </ul>
                       </div>
                       <div className="space-y-2">
                         <span className="text-[10px] text-rose-400 uppercase font-bold block">🚨 Riscos & Contingência</span>
-                        <ul className="space-y-1 list-disc list-inside text-slate-400">
+                        <ul className="space-y-1 list-disc list-inside text-slate-400 text-[11px]">
                           {selectedThesis.risks.map((r, i) => <li key={i}>{r}</li>)}
                         </ul>
                       </div>
@@ -3996,7 +4782,7 @@ export default function App() {
                 </div>
 
                 <div className="text-[10px] text-slate-500 text-right mt-6">
-                  Suporta marcação de parágrafo livre e vetores de risco quantificados.
+                  Suporta marcação de parágrafo livre, vetores de risco quantificados e exportação automatizada para PDF.
                 </div>
               </div>
 
