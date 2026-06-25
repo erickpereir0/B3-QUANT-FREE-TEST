@@ -1,5 +1,5 @@
 import { baseApiClient } from "./base";
-import { ValuationParameters, ThesisItem, RebalancingItem, NewsItem } from "../../types";
+import { ValuationParameters, ThesisItem, RebalancingItem, NewsItem, ScreenerAssetsResponse } from "../../types";
 
 export interface PythonAssetData {
   ticker: string;
@@ -111,6 +111,13 @@ export class B3QuantApiService {
    */
   public async getThesis(ticker: string): Promise<ThesisItem> {
     return baseApiClient.get<ThesisItem>(`/api/thesis/${ticker.toUpperCase()}`);
+  }
+
+  /**
+   * Obtém o universo completo de ativos da B3 com preços em lote em tempo real
+   */
+  public async getScreenerAssets(): Promise<ScreenerAssetsResponse> {
+    return baseApiClient.get<ScreenerAssetsResponse>("/api/screener/assets");
   }
 }
 

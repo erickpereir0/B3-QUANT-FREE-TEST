@@ -188,7 +188,7 @@ app.post("/api/ai/chat-advisor", async (req, res) => {
 });
 
 // Proxy general Python API requests to localhost:8000
-app.use(["/api/asset", "/api/valuation", "/api/portfolio", "/api/nlp"], (req, res) => {
+app.use(["/api/asset", "/api/valuation", "/api/portfolio", "/api/nlp", "/api/screener"], (req, res) => {
   const targetUrl = `http://127.0.0.1:8000${req.originalUrl}`;
   console.log(`[Proxy] Routing request to: ${targetUrl}`);
   

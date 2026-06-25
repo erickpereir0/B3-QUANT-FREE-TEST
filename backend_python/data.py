@@ -122,6 +122,46 @@ class B3Data:
             
         return pd.DataFrame()
 
+    def get_bulk_closing_prices(self, tickers: list) -> dict:
+        """
+        Puxa preços de fechamento recentes para múltiplos ativos de uma só vez (otimizado via lote yfinance).
+        """
+        results = {}
+        if not tickers:
+            return results
+            
+        formatted_tickers = [t.upper().strip() for t in tickers]
+        sa_tickers = [f"{t}.SA" for t in formatted_tickers]
+        
+        try:
+            print(f"[B3Data] Buscando {len(sa_tickers)} ativos em lote no yfinance...")
+            # Puxamos 5d para garantir o fechamento mais recente mesmo no fim de semana ou feriados
+            df = yf.download(" ".join(sa_tickers), period="5d", progress=False, group_by="ticker")
+            
+            # Se for apenas 1 ativo, o dataframe pode não ter MultiIndex
+            has_multiindex = isinstance(df.columns, pd.MultiIndex)
+            
+            for t in formatted_tickers:
+                sa_t = f"{t}.SA"
+                try:
+                    if has_multiindex:
+                        if sa_t in df.columns.levels[0]:
+                            close_series = df[sa_t]['Close'].dropna()
+                            if not close_series.empty:
+                                results[t] = float(close_series.iloc[-1])
+                    else:
+                        # Para ticker único ou formato sem MultiIndex
+                        if 'Close' in df.columns:
+                            close_series = df['Close'].dropna()
+                            if not close_series.empty:
+                                results[t] = float(close_series.iloc[-1])
+                except Exception as e:
+                    print(f"[B3Data] Erro ao extrair preço em lote para {t}: {e}")
+        except Exception as e:
+            print(f"[B3Data] Falha crítica no download em lote do yfinance: {e}")
+            
+        return results
+
     def __del__(self):
         """Finaliza a conexão de forma segura ao encerrar o objeto."""
         if self.mt5_initialized and MT5_AVAILABLE:

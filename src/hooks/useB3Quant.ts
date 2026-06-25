@@ -6,7 +6,7 @@ import {
   SentimentAnalysisOutput, 
   PortfolioOptimizationOutput 
 } from "../services/api/b3QuantApi";
-import { ValuationParameters } from "../types";
+import { ValuationParameters, ScreenerAssetsResponse } from "../types";
 
 export function useB3Quant() {
   const [loading, setLoading] = useState<boolean>(false);
@@ -96,6 +96,25 @@ export function useB3Quant() {
     }
   }, []);
 
+  /**
+   * Busca todo o universo de ativos para os Screeners (Ações + FIIs) com cotações atualizadas
+   */
+  const fetchScreenerAssets = useCallback(async (): Promise<ScreenerAssetsResponse> => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await b3QuantApiService.getScreenerAssets();
+      return data;
+    } catch (err: any) {
+      const errMsg = err.message || "Erro desconhecido ao carregar Screeners de ativos.";
+      setError(errMsg);
+      console.error("[useB3Quant] fetchScreenerAssets error:", err);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   const clearError = useCallback(() => {
     setError(null);
   }, []);
@@ -111,6 +130,7 @@ export function useB3Quant() {
     calculateValuation,
     analyzeFiling,
     optimizePortfolioWeights,
+    fetchScreenerAssets,
     clearError
   };
 }

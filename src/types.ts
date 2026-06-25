@@ -89,3 +89,41 @@ export interface ThesisItem {
   catalysts: string[];
   risks: string[];
 }
+
+export interface ScreenerStock {
+  ticker: string;
+  name: string;
+  price: number;
+  pl: number;
+  roe: number;
+  divYield: number;
+  marketCap: number;
+  evEbitda: number;
+  debtEquity: number;
+  dlEbitda: number;
+  netMargin: number;
+  liquidity: number;
+  vpv: number;
+  lpa: number;
+  vpa: number;
+  growthRate: number;
+  sector: string;
+  var12m: number;
+}
+
+export interface ScreenerFII {
+  ticker: string;
+  name: string;
+  price: number;
+  divYield: number;
+  vpv: number;
+  liquidity: number;
+  propertiesCount: number;
+  vacancy: number;
+  segment: string;
+}
+
+export interface ScreenerAssetsResponse {
+  stocks: ScreenerStock[];
+  fiis: ScreenerFII[];
+}
