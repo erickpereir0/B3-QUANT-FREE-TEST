@@ -43,8 +43,13 @@ b3-quant-backend/
    *Nota sobre o Windows:* O pacote `PyPortfolioOpt` foi comentado nas dependências padrão para evitar falhas de compilação caso você não possua o compilador C++ do Visual Studio Build Tools instalado. Se desejar usar a otimização de portfólio por fronteira eficiente localmente, instale o compilador C++ correspondente e descomente a linha no arquivo `requirements.txt`.
 
 4. **Inicie o servidor local**:
+   Se puder executar diretamente:
    ```bash
    uvicorn main:app --reload --port 8000
+   ```
+   Caso o terminal retorne `bash: uvicorn: command not found` (comum no Git Bash do Windows devido aos caminhos do PATH), execute usando o executável do Python associado ao venv ativo:
+   ```bash
+   python -m uvicorn main:app --reload --port 8000
    ```
 
    O backend estará rodando em `http://localhost:8000` e a documentação interativa Swagger estará disponível em `http://localhost:8000/docs`.

@@ -87,8 +87,13 @@ O motor quantitativo em Python processa o carregamento inteligente de ativos rea
    *Nota: No arquivo `requirements.txt`, relaxamos as versões e comentamos pacotes como `PyPortfolioOpt` por padrão para evitar que o terminal exija que você tenha o compilador do Microsoft Visual Studio C++ instalado localmente. Caso queira a otimização matemática de portfólio local avançada, instale o Build Tools do C++ e descomente a linha.*
 
 4. **Inicie o servidor FastAPI**:
+   Se você puder executar diretamente:
    ```bash
    uvicorn main:app --reload --port 8000
+   ```
+   Caso o seu terminal exiba `bash: uvicorn: command not found` (muito comum no Git Bash do Windows), você deve executar o comando usando o módulo do Python diretamente pelo seu ambiente virtual ativado:
+   ```bash
+   python -m uvicorn main:app --reload --port 8000
    ```
    *O backend Python estará disponível em `http://localhost:8000` com documentação interativa Swagger em `http://localhost:8000/docs`.*
 
