@@ -63,12 +63,12 @@ O motor quantitativo em Python processa o carregamento inteligente de ativos rea
 
 ### Passo a Passo
 
-1. **Navegue até a pasta do backend**:
+1. **⚠️ ATENÇÃO: Navegue até a pasta do backend primeiro!** (Este passo é obrigatório para evitar o erro `Could not import module "main"`):
    ```bash
    cd backend_python
    ```
 
-2. **Crie e ative o ambiente virtual (venv)**:
+2. **Crie e ative o ambiente virtual (venv)** dentro da pasta `backend_python`:
    * **Linux/macOS**:
      ```bash
      python -m venv venv
@@ -79,6 +79,10 @@ O motor quantitativo em Python processa o carregamento inteligente de ativos rea
      python -m venv venv
      .\venv\Scripts\activate
      ```
+   * **Windows (Git Bash)**:
+     ```bash
+     source venv/Scripts/activate
+     ```
 
 3. **Instale as dependências**:
    ```bash
@@ -86,7 +90,7 @@ O motor quantitativo em Python processa o carregamento inteligente de ativos rea
    ```
    *Nota: No arquivo `requirements.txt`, relaxamos as versões e comentamos pacotes como `PyPortfolioOpt` por padrão para evitar que o terminal exija que você tenha o compilador do Microsoft Visual Studio C++ instalado localmente. Caso queira a otimização matemática de portfólio local avançada, instale o Build Tools do C++ e descomente a linha.*
 
-4. **Inicie o servidor FastAPI**:
+4. **Inicie o servidor FastAPI (certifique-se de estar dentro da pasta `backend_python`)**:
    Se você puder executar diretamente:
    ```bash
    uvicorn main:app --reload --port 8000
@@ -95,6 +99,10 @@ O motor quantitativo em Python processa o carregamento inteligente de ativos rea
    ```bash
    python -m uvicorn main:app --reload --port 8000
    ```
+
+   > **💡 Por que o erro `Could not import module "main"` acontece?**
+   > Se você rodar o comando acima a partir da pasta raiz (`B3-QUANT-FREE-TEST`), o Python não encontrará o arquivo `main.py` porque ele está dentro de `backend_python/`. Certifique-se de fazer `cd backend_python` antes de iniciar o servidor!
+
    *O backend Python estará disponível em `http://localhost:8000` com documentação interativa Swagger em `http://localhost:8000/docs`.*
 
 ---

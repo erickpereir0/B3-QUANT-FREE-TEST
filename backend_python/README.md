@@ -20,6 +20,8 @@ b3-quant-backend/
 
 ## 🚀 Como Executar o Backend Localmente
 
+> **⚠️ IMPORTANTE:** Certifique-se de que seu terminal está localizado dentro desta pasta `backend_python/` antes de rodar os comandos. Se estiver na raiz do projeto, execute primeiro `cd backend_python`.
+
 1. **Abra o terminal na pasta do backend** e crie um ambiente virtual:
    ```bash
    python -m venv venv
