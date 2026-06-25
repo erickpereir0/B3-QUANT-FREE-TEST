@@ -8,13 +8,15 @@ import path from "path";
 import { GoogleGenAI } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
+import http from "http";
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+// Apply express.json() only to Node-handled routes to preserve raw stream for proxying
+app.use("/api/ai", express.json());
 
 // Lazy-initialized Gemini client
 let aiClient: GoogleGenAI | null = null;
@@ -183,6 +185,42 @@ app.post("/api/ai/chat-advisor", async (req, res) => {
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
+});
+
+// Proxy general Python API requests to localhost:8000
+app.use(["/api/asset", "/api/valuation", "/api/portfolio", "/api/nlp"], (req, res) => {
+  const targetUrl = `http://127.0.0.1:8000${req.originalUrl}`;
+  console.log(`[Proxy] Routing request to: ${targetUrl}`);
+  
+  const parsedUrl = new URL(targetUrl);
+  
+  const proxyReq = http.request(
+    {
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port || 8000,
+      path: parsedUrl.pathname + parsedUrl.search,
+      method: req.method,
+      headers: {
+        ...req.headers,
+        host: parsedUrl.host, // Override host header
+      },
+    },
+    (proxyRes) => {
+      res.writeHead(proxyRes.statusCode || 500, proxyRes.headers);
+      proxyRes.pipe(res, { end: true });
+    }
+  );
+
+  proxyReq.on("error", (err) => {
+    console.error(`[Proxy Error] Failed to connect to Python backend for ${targetUrl}:`, err.message);
+    res.status(502).json({
+      error: "Falha de conexão com o servidor Python.",
+      details: "Certifique-se de que o backend Python está rodando na porta 8000.",
+      message: err.message,
+    });
+  });
+
+  req.pipe(proxyReq, { end: true });
 });
 
 async function startServer() {

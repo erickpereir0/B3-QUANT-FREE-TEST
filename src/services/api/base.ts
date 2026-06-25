@@ -13,8 +13,8 @@ export class BaseApiClient {
   private baseUrl: string;
 
   constructor() {
-    // Configura a URL base. Em ambiente de desenvolvimento pode apontar para localhost:8000 ou variável de ambiente
-    this.baseUrl = ((import.meta as any).env?.VITE_API_URL as string) || "http://localhost:8000";
+    // Configura a URL base. Em ambiente de desenvolvimento aponta para o mesmo host (através do nosso proxy no Node)
+    this.baseUrl = ((import.meta as any).env?.VITE_API_URL as string) || "";
   }
 
   /**
