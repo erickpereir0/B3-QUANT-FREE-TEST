@@ -773,9 +773,27 @@ export default function App() {
           2029: finalGrowth,
           2030: finalGrowth
         });
+
+        // Sincronizar Preço Teto Projetivo (PT) para Ações
+        setPtPayout(initialPayout);
+        setPtCurrentPrice(stock.price);
+        setPtNumberOfShares(total);
+        setPtProjectionFactor(0.0);
+        
+        // Lucro Projetivo Base
+        const baseProfit = lpa * total;
+        setPtBaseProfit(baseProfit);
+        setPtProjectiveProfit(baseProfit);
+      }
+    } else {
+      const fii = screenerFIIs.find(f => f.ticker === valuationParams.ticker) ||
+                  importedScreenerFIIs.find(f => f.ticker === valuationParams.ticker);
+      if (fii) {
+        setPtCurrentPrice(fii.price);
+        setPtProjectionFactor(0.0);
       }
     }
-  }, [valuationParams.ticker, screenerStocks]);
+  }, [valuationParams.ticker, screenerStocks, screenerFIIs]);
 
   // Efeito reativo para recalcular a taxa de crescimento esperada quando o analista altera o Payout ou o ROE (g = ROE * (1 - Payout/100))
   // Mantemos com duas casas decimais para maior precisão
@@ -801,8 +819,9 @@ export default function App() {
   // Estados para o Preço Teto Projetivo baseado na imagem 2
   const [ptDesiredYield, setPtDesiredYield] = useState(7.0);
   const [ptPayout, setPtPayout] = useState(60.0);
+  const [ptBaseProfit, setPtBaseProfit] = useState(4190120000);
   const [ptProjectiveProfit, setPtProjectiveProfit] = useState(4190120000);
-  const [ptProjectionFactor, setPtProjectionFactor] = useState(7.0);
+  const [ptProjectionFactor, setPtProjectionFactor] = useState(0.0);
   const [ptCurrentPrice, setPtCurrentPrice] = useState(11.51);
   const [ptNumberOfShares, setPtNumberOfShares] = useState(2860682000);
 
@@ -2781,15 +2800,22 @@ export default function App() {
                                 if (!isFii) {
                                   const stock = screenerStocks.find(s => s.ticker === valuationParams.ticker) ||
                                                 importedScreenerStocks.find(s => s.ticker === valuationParams.ticker);
-                                  const rawPayout = stock ? ((stock.price * stock.divYield / 100) / (stock.lpa || 3.38) * 100) : 68.84;
-                                  const rawRoe = stock ? stock.roe || 16.75 : 16.75;
-                                  const gRate = Math.round(stock ? stock.growthRate || 5.22 : 5.22);
-                                  setDcfPayout(Math.round(rawPayout));
-                                  setDcfRoe(Math.round(rawRoe));
+                                  
+                                  const rawRoe = stock ? parseFloat((stock.roe || 15).toFixed(2)) : 16.75;
+                                  const divPerShare = stock ? (stock.price * stock.divYield) / 100 : 0;
+                                  const lpa = stock ? stock.lpa || 3.38 : 3.38;
+                                  const payout = stock ? (lpa > 0 ? Math.min(100, Math.max(10, (divPerShare / lpa) * 100)) : 60) : 68.84;
+                                  const rawPayout = parseFloat(payout.toFixed(2));
+                                  const calculatedGrowth = parseFloat((rawRoe * (1 - rawPayout / 100)).toFixed(2));
+                                  const gRate = calculatedGrowth > 0 ? calculatedGrowth : parseFloat((stock?.growthRate || 5.22).toFixed(2));
+
+                                  setDcfPayout(rawPayout);
+                                  setDcfRoe(rawRoe);
                                   setDcfGrowthRate(gRate);
-                                  setDcfDiscountRate(14);
+                                  setDcfDiscountRate(14.50);
                                   setDcfProjectionYears(3);
-                                  setDcfPerpCrescimento(3);
+                                  setDcfPerpCrescimento(3.0);
+                                  setDcf2026Profit(null);
                                   setDcfProjectedGrowths({
                                     2026: gRate,
                                     2027: gRate,
@@ -2921,14 +2947,20 @@ export default function App() {
                                           <input
                                             type="number"
                                             step="0.01"
-                                            value={dcf2026Profit === null ? "" : dcf2026Profit}
+                                            value={dcf2026Profit === null ? "" : parseFloat(dcf2026Profit.toFixed(2))}
                                             onChange={(e) => {
                                               const rawVal = e.target.value;
                                               if (rawVal === "") {
                                                 setDcf2026Profit(null);
                                               } else {
                                                 const sanitized = rawVal.replace(",", ".");
-                                                setDcf2026Profit(parseFloat(sanitized) || 0);
+                                                const profitVal = parseFloat(sanitized) || 0;
+                                                setDcf2026Profit(profitVal);
+                                                const computedGrowth = ((profitVal - base2025Profit) / base2025Profit) * 100;
+                                                setDcfProjectedGrowths(prev => ({
+                                                  ...prev,
+                                                  [2026]: computedGrowth
+                                                }));
                                               }
                                             }}
                                             placeholder={(base2025Profit * (1 + (dcfProjectedGrowths[2026] ?? dcfGrowthRate) / 100)).toFixed(2)}
@@ -2940,29 +2972,26 @@ export default function App() {
                                       )}
                                     </td>
                                     <td className="py-2 text-right font-mono">
-                                      {y === 2026 ? (
-                                        <span className="text-slate-400 text-xs font-bold font-mono">
-                                          {growthPct >= 0 ? "+" : ""}{growthPct.toFixed(2).replace(".", ",")}%
-                                        </span>
-                                      ) : (
-                                        <div className="inline-flex items-center gap-1.5 w-full justify-end font-mono">
-                                          <input
-                                            type="number"
-                                            step="0.01"
-                                            value={parseFloat(growthPct.toFixed(2))}
-                                            onChange={(e) => {
-                                              const rawVal = e.target.value.replace(",", ".");
-                                              const numVal = parseFloat(rawVal) || 0;
-                                              setDcfProjectedGrowths(prev => ({
-                                                ...prev,
-                                                [y]: numVal
-                                              }));
-                                            }}
-                                            className="bg-black/60 border border-white/10 rounded px-2 py-1 text-xs text-orange-500 text-right w-24 focus:border-orange-500 outline-none font-bold font-mono"
-                                          />
-                                          <span className="text-[10px] text-slate-500 font-mono">%</span>
-                                        </div>
-                                      )}
+                                      <div className="inline-flex items-center gap-1.5 w-full justify-end font-mono">
+                                        <input
+                                          type="number"
+                                          step="0.01"
+                                          value={parseFloat(growthPct.toFixed(2))}
+                                          onChange={(e) => {
+                                            const rawVal = e.target.value.replace(",", ".");
+                                            const numVal = parseFloat(rawVal) || 0;
+                                            setDcfProjectedGrowths(prev => ({
+                                              ...prev,
+                                              [y]: numVal
+                                            }));
+                                            if (y === 2026) {
+                                              setDcf2026Profit(base2025Profit * (1 + numVal / 100));
+                                            }
+                                          }}
+                                          className="bg-black/60 border border-white/10 rounded px-2 py-1 text-xs text-orange-500 text-right w-24 focus:border-orange-500 outline-none font-bold font-mono"
+                                        />
+                                        <span className="text-[10px] text-slate-500 font-mono">%</span>
+                                      </div>
                                     </td>
                                     <td className="py-2 text-right font-bold text-blue-400 font-mono">{rFormat(vp)}</td>
                                   </tr>
@@ -3114,7 +3143,6 @@ export default function App() {
                               onChange={(e) => {
                                 const val = parseFloat(e.target.value) || 0;
                                 setPtDesiredYield(val);
-                                setPtProjectionFactor(val);
                               }}
                               className="bg-transparent text-white text-sm font-bold text-center w-full focus:outline-none"
                             />
@@ -3133,7 +3161,6 @@ export default function App() {
                               onClick={() => {
                                 const val = parseFloat((ptProjectionFactor - 0.25).toFixed(2));
                                 setPtProjectionFactor(val);
-                                setPtDesiredYield(val);
                               }}
                               className="w-6 h-6 bg-white/5 rounded hover:bg-white/10 text-slate-300 flex items-center justify-center font-bold text-sm"
                             >
@@ -3144,14 +3171,13 @@ export default function App() {
                               onClick={() => {
                                 const val = parseFloat((ptProjectionFactor + 0.25).toFixed(2));
                                 setPtProjectionFactor(val);
-                                setPtDesiredYield(val);
                               }}
                               className="w-6 h-6 bg-white/5 rounded hover:bg-white/10 text-slate-300 flex items-center justify-center font-bold text-sm"
                             >
                               +
                             </button>
                           </div>
-                          <span className="text-xs text-slate-400 text-right">Sincronizado</span>
+                          <span className="text-xs text-slate-400 text-right">Crescimento</span>
                         </div>
                       </div>
                     </>
@@ -3169,7 +3195,6 @@ export default function App() {
                               onChange={(e) => {
                                 const val = parseFloat(e.target.value) || 0;
                                 setPtDesiredYield(val);
-                                setPtProjectionFactor(val); // Sincroniza conforme lógica mapeada do seletor duplo na Imagem 2
                               }}
                               className="bg-transparent text-white text-sm font-bold text-center w-full focus:outline-none"
                             />
@@ -3200,12 +3225,18 @@ export default function App() {
                       {/* Lucro Projetivo */}
                       <div className="p-3 bg-[#0c0c0c] rounded border border-white/5 space-y-2">
                         <label className="text-[10px] uppercase tracking-wider text-slate-400">Lucro Projetivo</label>
-                        <div className="flex items-center gap-1.5 bg-black border border-white/10 rounded px-2 py-1">
+                        <div className="flex items-center gap-1.5 bg-black border border-white/10 rounded px-2 py-1 font-mono">
                           <span className="text-slate-500 text-xs font-bold">R$</span>
                           <input
                             type="number"
-                            value={ptProjectiveProfit}
-                            onChange={(e) => setPtProjectiveProfit(parseInt(e.target.value) || 0)}
+                            step="0.01"
+                            value={ptProjectiveProfit === 0 ? "" : ptProjectiveProfit}
+                            onChange={(e) => {
+                              const rawVal = e.target.value.replace(",", ".");
+                              const val = parseFloat(rawVal) || 0;
+                              setPtProjectiveProfit(val);
+                              setPtBaseProfit(val / (1 + ptProjectionFactor / 100));
+                            }}
                             className="bg-transparent text-white text-xs font-bold w-full focus:outline-none"
                           />
                         </div>
@@ -3220,7 +3251,7 @@ export default function App() {
                               onClick={() => {
                                 const val = parseFloat((ptProjectionFactor - 0.25).toFixed(2));
                                 setPtProjectionFactor(val);
-                                setPtDesiredYield(val); // Sincroniza com seletor esquerdo
+                                setPtProjectiveProfit(ptBaseProfit * (1 + val / 100));
                               }}
                               className="w-6 h-6 bg-white/5 rounded hover:bg-white/10 text-slate-300 flex items-center justify-center font-bold text-sm"
                             >
@@ -3231,14 +3262,14 @@ export default function App() {
                               onClick={() => {
                                 const val = parseFloat((ptProjectionFactor + 0.25).toFixed(2));
                                 setPtProjectionFactor(val);
-                                setPtDesiredYield(val); // Sincroniza com seletor esquerdo
+                                setPtProjectiveProfit(ptBaseProfit * (1 + val / 100));
                               }}
                               className="w-6 h-6 bg-white/5 rounded hover:bg-white/10 text-slate-300 flex items-center justify-center font-bold text-sm"
                             >
                               +
                             </button>
                           </div>
-                          <span className="text-xs text-slate-400 text-right">Sincronizado</span>
+                          <span className="text-xs text-slate-400 text-right">Crescimento</span>
                         </div>
                       </div>
                     </>
@@ -3257,12 +3288,37 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => {
-                      setPtDesiredYield(7.0);
-                      setPtPayout(60.0);
-                      setPtProjectiveProfit(4190120000);
-                      setPtProjectionFactor(7.0);
-                      setPtCurrentPrice(11.51);
-                      setPtNumberOfShares(2860682000);
+                      setPtDesiredYield(6.0); // Padrão Bazin para Yield desejado
+                      setPtProjectionFactor(0.0);
+                      
+                      const isFii = valuationParams.ticker.endsWith("11");
+                      if (!isFii) {
+                        const stock = screenerStocks.find(s => s.ticker === valuationParams.ticker) ||
+                                      importedScreenerStocks.find(s => s.ticker === valuationParams.ticker);
+                        if (stock) {
+                          const computedShares = Math.round((stock.marketCap * 1_000_000_000) / stock.price);
+                          const total = computedShares > 0 ? computedShares : 2861782000;
+                          
+                          const divPerShare = (stock.price * stock.divYield) / 100;
+                          const lpa = stock.lpa || 3.38;
+                          const payout = lpa > 0 ? Math.min(100, Math.max(10, (divPerShare / lpa) * 100)) : 60;
+                          const initialPayout = parseFloat(payout.toFixed(2));
+                          
+                          const baseProfit = lpa * total;
+
+                          setPtPayout(initialPayout);
+                          setPtCurrentPrice(stock.price);
+                          setPtNumberOfShares(total);
+                          setPtBaseProfit(baseProfit);
+                          setPtProjectiveProfit(baseProfit);
+                        }
+                      } else {
+                        const fii = screenerFIIs.find(f => f.ticker === valuationParams.ticker) ||
+                                    importedScreenerFIIs.find(f => f.ticker === valuationParams.ticker);
+                        if (fii) {
+                          setPtCurrentPrice(fii.price);
+                        }
+                      }
                     }}
                     className="border border-white/10 hover:bg-white/5 text-slate-400 hover:text-white text-[10px] uppercase font-bold py-2.5 rounded transition-all"
                   >
@@ -3281,7 +3337,7 @@ export default function App() {
                   let margemSegurancaVal = 0;
 
                   if (isFii) {
-                    dpaProjetivoVal = valuationParams.dpa;
+                    dpaProjetivoVal = valuationParams.dpa * (1 + ptProjectionFactor / 100);
                     precoTetoVal = dpaProjetivoVal / (ptDesiredYield / 100);
                     yieldProjetivoVal = (dpaProjetivoVal / ptCurrentPrice) * 100;
                     margemSegurancaVal = ((precoTetoVal - ptCurrentPrice) / ptCurrentPrice) * 100;
