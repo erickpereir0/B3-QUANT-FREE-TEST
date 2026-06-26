@@ -89,7 +89,9 @@ import {
   calculateGrahamPrice,
   calculateGordonPrice,
   calculateBazinPrice,
-  calculateDCF
+  calculateDCF,
+  calculatePeterLynchRatio,
+  calculateGreenblattScore
 } from "./domain/valuation";
 
 // Custom premium tooltip component for screener metrics
@@ -1265,7 +1267,7 @@ export default function App() {
     const rows = sortedAndFilteredStocks.map(s => {
       const bazinVal = calculateBazinPrice(s.price * s.divYield / 100, vBazin);
       const grahamVal = calculateGrahamPrice(s.lpa, s.vpa, vGraham);
-      const lynchVal = ((s.growthRate || 3.0) + s.divYield) / s.pl;
+      const lynchVal = calculatePeterLynchRatio(s.growthRate || 3.0, s.divYield, s.pl);
       return [
         s.ticker, 
         s.name, 
@@ -1428,8 +1430,8 @@ export default function App() {
           const valB = calculateGrahamPrice(b.lpa, b.vpa, vGraham);
           return valB - valA;
         } else if (stockRankMethod === "Peter Lynch") {
-          const valA = ((a.growthRate || 3.0) + a.divYield) / a.pl;
-          const valB = ((b.growthRate || 3.0) + b.divYield) / b.pl;
+          const valA = calculatePeterLynchRatio(a.growthRate || 3.0, a.divYield, a.pl);
+          const valB = calculatePeterLynchRatio(b.growthRate || 3.0, b.divYield, b.pl);
           return valB - valA;
         } else if (stockRankMethod === "Performance 12m") {
           const valA = (a as any).var12m ?? 0;
@@ -4545,8 +4547,8 @@ export default function App() {
                         // Compute calculations dynamically for live response
                         const bazinVal = calculateBazinPrice(s.price * s.divYield / 100, vBazin);
                         const grahamVal = calculateGrahamPrice(s.lpa, s.vpa, vGraham);
-                        const lynchVal = ((s.growthRate || 3.0) + s.divYield) / s.pl;
-                        const joelScoreVal = (s.roe + s.netMargin) / (s.pl * 25) * 0.1;
+                        const lynchVal = calculatePeterLynchRatio(s.growthRate || 3.0, s.divYield, s.pl);
+                        const joelScoreVal = calculateGreenblattScore(s.roe, s.netMargin, s.pl);
 
                         // Logo color
                         let logoColor = "bg-emerald-500";
@@ -5737,7 +5739,7 @@ export default function App() {
                     <td className="py-2.5 px-4 font-mono font-bold text-purple-300 text-xs">Valuation Peter Lynch</td>
                     {selectedCompareTickers.map(ticker => {
                       const asset = initialScreenerStocks.find(s => s.ticker === ticker);
-                      const lynchVal = asset ? ((asset.growthRate || 3.0) + asset.divYield) / asset.pl : 0;
+                      const lynchVal = asset ? calculatePeterLynchRatio(asset.growthRate || 3.0, asset.divYield, asset.pl) : 0;
                       return (
                         <td key={ticker} className="py-2.5 px-4 text-center font-mono font-bold text-purple-200 border-l border-white/5">
                           {asset ? lynchVal.toFixed(2) : "-"}
