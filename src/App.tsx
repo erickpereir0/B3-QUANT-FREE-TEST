@@ -85,6 +85,13 @@ import {
 
 import { InteractiveMap } from "./components/InteractiveMap";
 
+import {
+  calculateGrahamPrice,
+  calculateGordonPrice,
+  calculateBazinPrice,
+  calculateDCF
+} from "./domain/valuation";
+
 // Custom premium tooltip component for screener metrics
 const ScreenerMetricLabel: React.FC<{ label: string; tooltip: string; dark?: boolean }> = ({ label, tooltip, dark }) => {
   return (
@@ -1256,8 +1263,8 @@ export default function App() {
       "Valuation Bazin", "Valuation Graham", "Valuation Peter Lynch"
     ];
     const rows = sortedAndFilteredStocks.map(s => {
-      const bazinVal = (s.price * s.divYield / 100) / (vBazin / 100);
-      const grahamVal = Math.sqrt(vGraham * s.lpa * s.vpa);
+      const bazinVal = calculateBazinPrice(s.price * s.divYield / 100, vBazin);
+      const grahamVal = calculateGrahamPrice(s.lpa, s.vpa, vGraham);
       const lynchVal = ((s.growthRate || 3.0) + s.divYield) / s.pl;
       return [
         s.ticker, 
@@ -1413,12 +1420,12 @@ export default function App() {
       })
       .sort((a, b) => {
         if (stockRankMethod === "Bazin") {
-          const valA = (a.price * a.divYield / 100) / (vBazin / 100);
-          const valB = (b.price * b.divYield / 100) / (vBazin / 100);
+          const valA = calculateBazinPrice(a.price * a.divYield / 100, vBazin);
+          const valB = calculateBazinPrice(b.price * b.divYield / 100, vBazin);
           return valB - valA;
         } else if (stockRankMethod === "Graham") {
-          const valA = Math.sqrt(vGraham * a.lpa * a.vpa);
-          const valB = Math.sqrt(vGraham * b.lpa * b.vpa);
+          const valA = calculateGrahamPrice(a.lpa, a.vpa, vGraham);
+          const valB = calculateGrahamPrice(b.lpa, b.vpa, vGraham);
           return valB - valA;
         } else if (stockRankMethod === "Peter Lynch") {
           const valA = ((a.growthRate || 3.0) + a.divYield) / a.pl;
@@ -1477,9 +1484,11 @@ export default function App() {
     return 72.30;
   })();
 
-  const precoJustoGordon = (valuationParams.gordonDiscount - valuationParams.gordonGrowth) > 0
-    ? (valuationParams.currentDividend * (1 + valuationParams.gordonGrowth / 100)) / ((valuationParams.gordonDiscount - valuationParams.gordonGrowth) / 100)
-    : 0;
+  const precoJustoGordon = calculateGordonPrice(
+    valuationParams.currentDividend,
+    valuationParams.gordonGrowth,
+    valuationParams.gordonDiscount
+  );
 
   const margemSegurancaGordon = currentAssetPriceForModels > 0 
     ? ((precoJustoGordon - currentAssetPriceForModels) / currentAssetPriceForModels) * 100 
@@ -2165,7 +2174,7 @@ export default function App() {
                       const stock = initialScreenerStocks.find(s => s.ticker === valuationParams.ticker);
                       return stock ? stock.price : 72.30;
                     })();
-                    const grahamVal = valuationParams.lpa * valuationParams.vpa > 0 ? Math.sqrt(22.5 * valuationParams.lpa * valuationParams.vpa) : 0;
+                    const grahamVal = calculateGrahamPrice(valuationParams.lpa, valuationParams.vpa, 22.5);
                     const margemSeguranca = currentAssetPrice > 0 ? ((grahamVal - currentAssetPrice) / currentAssetPrice) * 100 : 0;
 
                     return (
@@ -2692,50 +2701,19 @@ export default function App() {
                     const currentLpa = stock ? stock.lpa || 3.38 : 3.38;
                     const base2025Profit = currentLpa * dcfTotalShares;
 
-                    // Lucros históricos retro-indexados matematicamente baseados na DPA/LPA real da ação selecionada
-                    const hist2025 = base2025Profit;
-                    const hist2024 = hist2025 / (1 + -31.18 / 100);
-                    const hist2023 = hist2024 / (1 + 23.45 / 100);
-                    const hist2022 = hist2023 / (1 + 40.85 / 100);
-                    const hist2021 = hist2022 / (1 + 9.10 / 100);
-
-                    // Lucros projetados calculados dinamicamente com base nas premissas de crescimento do analista por ano
-                    const computedProjectedProfits: Record<number, number> = {};
-                    const active2026Profit = dcf2026Profit !== null ? dcf2026Profit : base2025Profit * (1 + (dcfProjectedGrowths[2026] ?? dcfGrowthRate) / 100);
-                    computedProjectedProfits[2026] = active2026Profit;
-
-                    let currentProfit = active2026Profit;
-                    const remainingProjYears = [2027, 2028, 2029, 2030];
-                    remainingProjYears.forEach(year => {
-                      const growth = dcfProjectedGrowths[year] ?? dcfGrowthRate;
-                      currentProfit = currentProfit * (1 + growth / 100);
-                      computedProjectedProfits[year] = currentProfit;
+                    const dcfResult = calculateDCF({
+                      base2025Profit,
+                      dcf2026Profit,
+                      dcfProjectedGrowths,
+                      dcfGrowthRate,
+                      dcfDiscountRate,
+                      dcfProjectionYears,
+                      dcfPerpCrescimento,
+                      dcfSharesExTreasury,
                     });
 
-                    const vps: Record<number, number> = {};
-                    let sumVP = 0;
-
-                    const projYears = [2026, 2027, 2028];
-                    if (dcfProjectionYears === 5) {
-                      projYears.push(2029, 2030);
-                    }
-
-                    projYears.forEach((y, idx) => {
-                      const profit = computedProjectedProfits[y] || 0;
-                      const discountFactor = Math.pow(1 + dcfDiscountRate / 100, idx + 1);
-                      const vp = profit / discountFactor;
-                      vps[y] = vp;
-                      sumVP += vp;
-                    });
-
-                    const lastYear = projYears[projYears.length - 1];
-                    const lastProfit = computedProjectedProfits[lastYear] || 0;
-                    const denominator = (dcfDiscountRate - dcfPerpCrescimento) / 100;
-                    const perpProfitVal = denominator > 0 ? (lastProfit * (1 + dcfPerpCrescimento / 100)) / denominator : 0;
-                    const perpVPL = perpProfitVal / Math.pow(1 + dcfDiscountRate / 100, dcfProjectionYears);
-
-                    const totalValuationVal = sumVP + perpVPL;
-                    const precoPorAcaoVal = totalValuationVal / dcfSharesExTreasury;
+                    const totalValuationVal = dcfResult.totalValuationVal;
+                    const precoPorAcaoVal = dcfResult.precoPorAcaoVal;
 
                     const currentAssetPrice = (() => {
                       const s = initialScreenerStocks.find(st => st.ticker === valuationParams.ticker);
@@ -2877,19 +2855,18 @@ export default function App() {
                           const currentLpa = stock ? stock.lpa || 3.38 : 3.38;
                           const base2025Profit = currentLpa * dcfTotalShares;
 
-                          const hist2025 = base2025Profit;
-                          const hist2024 = hist2025 / (1 + -31.18 / 100);
-                          const hist2023 = hist2024 / (1 + 23.45 / 100);
-                          const hist2022 = hist2023 / (1 + 40.85 / 100);
-                          const hist2021 = hist2022 / (1 + 9.10 / 100);
+                          const dcfResult = calculateDCF({
+                            base2025Profit,
+                            dcf2026Profit,
+                            dcfProjectedGrowths,
+                            dcfGrowthRate,
+                            dcfDiscountRate,
+                            dcfProjectionYears,
+                            dcfPerpCrescimento,
+                            dcfSharesExTreasury,
+                          });
 
-                          return [
-                            { yr: "2021", val: hist2021, pctStr: "30,98%" },
-                            { yr: "2022", val: hist2022, pctStr: "9,10%" },
-                            { yr: "2023", val: hist2023, pctStr: "40,85%" },
-                            { yr: "2024", val: hist2024, pctStr: "23,45%" },
-                            { yr: "2025", val: hist2025, pctStr: "-31,18%" }
-                          ].map(({ yr, val, pctStr }) => (
+                          return dcfResult.historicalProfits.map(({ yr, val, pctStr }) => (
                             <tr key={yr} className="hover:bg-white/5 text-slate-500">
                               <td className="py-3 font-bold text-center text-slate-500 font-mono">{yr}</td>
                               <td className="py-3 text-right font-mono">{rFormat(val)}</td>
@@ -2914,28 +2891,23 @@ export default function App() {
                           const currentLpa = stock ? stock.lpa || 3.38 : 3.38;
                           const base2025Profit = currentLpa * dcfTotalShares;
 
-                          const computedProjectedProfits: Record<number, number> = {};
-                          const active2026Profit = dcf2026Profit !== null ? dcf2026Profit : base2025Profit * (1 + (dcfProjectedGrowths[2026] ?? dcfGrowthRate) / 100);
-                          computedProjectedProfits[2026] = active2026Profit;
-
-                          let currentProfit = active2026Profit;
-                          const remainingProjYears = [2027, 2028, 2029, 2030];
-                          remainingProjYears.forEach(year => {
-                            const growth = dcfProjectedGrowths[year] ?? dcfGrowthRate;
-                            currentProfit = currentProfit * (1 + growth / 100);
-                            computedProjectedProfits[year] = currentProfit;
+                          const dcfResult = calculateDCF({
+                            base2025Profit,
+                            dcf2026Profit,
+                            dcfProjectedGrowths,
+                            dcfGrowthRate,
+                            dcfDiscountRate,
+                            dcfProjectionYears,
+                            dcfPerpCrescimento,
+                            dcfSharesExTreasury,
                           });
 
                           return (
                             <>
                               {years.map((y, idx) => {
-                                const value = computedProjectedProfits[y] || 0;
-                                const growthPct = y === 2026
-                                  ? (((value - base2025Profit) / base2025Profit) * 100)
-                                  : (dcfProjectedGrowths[y] ?? dcfGrowthRate);
-
-                                const discountFactor = Math.pow(1 + dcfDiscountRate / 100, idx + 1);
-                                const vp = value / discountFactor;
+                                const value = dcfResult.projectedProfits[y] || 0;
+                                const growthPct = dcfResult.projectedGrowths[y] || 0;
+                                const vp = dcfResult.presentValues[y] || 0;
 
                                 return (
                                   <tr key={y} className="hover:bg-orange-500/5 transition-colors font-mono">
@@ -3000,11 +2972,8 @@ export default function App() {
 
                               {/* Perpetuidade */}
                               {(() => {
-                                const lastYear = years[years.length - 1];
-                                const lastProfit = computedProjectedProfits[lastYear] || 0;
-                                const denominator = (dcfDiscountRate - dcfPerpCrescimento) / 100;
-                                const perpProfitVal = denominator > 0 ? (lastProfit * (1 + dcfPerpCrescimento / 100)) / denominator : 0;
-                                const perpVPL = perpProfitVal / Math.pow(1 + dcfDiscountRate / 100, dcfProjectionYears);
+                                const perpProfitVal = dcfResult.perpProfitVal;
+                                const perpVPL = dcfResult.perpVPL;
 
                                 return (
                                   <tr className="hover:bg-indigo-550/5 transition-colors bg-indigo-950/15 font-mono">
@@ -4574,8 +4543,8 @@ export default function App() {
                         const isFav = favoriteTickers.includes(s.ticker);
                         
                         // Compute calculations dynamically for live response
-                        const bazinVal = (s.price * s.divYield / 100) / (vBazin / 100);
-                        const grahamVal = Math.sqrt(vGraham * s.lpa * s.vpa);
+                        const bazinVal = calculateBazinPrice(s.price * s.divYield / 100, vBazin);
+                        const grahamVal = calculateGrahamPrice(s.lpa, s.vpa, vGraham);
                         const lynchVal = ((s.growthRate || 3.0) + s.divYield) / s.pl;
                         const joelScoreVal = (s.roe + s.netMargin) / (s.pl * 25) * 0.1;
 
@@ -5736,7 +5705,7 @@ export default function App() {
                     <td className="py-2.5 px-4 font-mono font-bold text-amber-300 text-xs">Valuation Décio Bazin</td>
                     {selectedCompareTickers.map(ticker => {
                       const asset = initialScreenerStocks.find(s => s.ticker === ticker);
-                      const bazinVal = asset ? (asset.price * asset.divYield / 100) / (vBazin / 100) : 0;
+                      const bazinVal = asset ? calculateBazinPrice(asset.price * asset.divYield / 100, vBazin) : 0;
                       return (
                         <td key={ticker} className="py-2.5 px-4 text-center font-mono font-bold text-amber-200 border-l border-white/5">
                           {asset ? rFormat(bazinVal) : "-"}
@@ -5752,7 +5721,7 @@ export default function App() {
                     <td className="py-2.5 px-4 font-mono font-bold text-blue-300 text-xs">Valuation Graham</td>
                     {selectedCompareTickers.map(ticker => {
                       const asset = initialScreenerStocks.find(s => s.ticker === ticker);
-                      const grahamVal = asset ? Math.sqrt(vGraham * asset.lpa * asset.vpa) : null;
+                      const grahamVal = asset ? calculateGrahamPrice(asset.lpa, asset.vpa, vGraham) : null;
                       return (
                         <td key={ticker} className="py-2.5 px-4 text-center font-mono font-bold text-blue-200 border-l border-white/5">
                           {asset && grahamVal ? rFormat(grahamVal) : "R$ 0,00"}
