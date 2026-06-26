@@ -6,12 +6,12 @@
 import { StockPosition, Alert, CVMFilings, NewsItem, AssetCorrelation, RebalancingItem, ThesisItem } from "./types";
 
 export const initialStockPositions: StockPosition[] = [
-  { ticker: "VALE3", averagePrice: 68.50, currentPrice: 72.30, quantity: 500, totalValue: 36150.00, plPercentage: 5.55 },
-  { ticker: "PETR4", averagePrice: 28.50, currentPrice: 34.10, quantity: 800, totalValue: 27280.00, plPercentage: 19.65 },
-  { ticker: "ITUB4", averagePrice: 24.50, currentPrice: 28.95, quantity: 1200, totalValue: 34740.00, plPercentage: 18.16 },
+  { ticker: "VALE3", averagePrice: 68.50, currentPrice: 61.20, quantity: 500, totalValue: 30600.00, plPercentage: -10.66 },
+  { ticker: "PETR4", averagePrice: 28.50, currentPrice: 38.06, quantity: 800, totalValue: 30448.00, plPercentage: 33.54 },
+  { ticker: "ITUB4", averagePrice: 24.50, currentPrice: 33.50, quantity: 1200, totalValue: 40200.00, plPercentage: 36.73 },
   { ticker: "BBAS3", averagePrice: 18.20, currentPrice: 26.50, quantity: 1200, totalValue: 31800.00, plPercentage: 45.60 },
-  { ticker: "BBDC4", averagePrice: 13.10, currentPrice: 14.50, quantity: 1100, totalValue: 15950.00, plPercentage: 10.69 },
-  { ticker: "WEGE3", averagePrice: 34.00, currentPrice: 40.00, quantity: 450, totalValue: 18000.00, plPercentage: 17.65 },
+  { ticker: "BBDC4", averagePrice: 13.10, currentPrice: 13.80, quantity: 1100, totalValue: 15180.00, plPercentage: 5.34 },
+  { ticker: "WEGE3", averagePrice: 34.00, currentPrice: 48.50, quantity: 450, totalValue: 21825.00, plPercentage: 42.65 },
   { ticker: "HGLG11", averagePrice: 160.00, currentPrice: 162.50, quantity: 150, totalValue: 24375.00, plPercentage: 1.56 },
   { ticker: "KNIP11", averagePrice: 91.20, currentPrice: 94.40, quantity: 200, totalValue: 18880.00, plPercentage: 3.51 }
 ];
@@ -88,16 +88,16 @@ export const initialCorrelation: AssetCorrelation = {
 };
 
 export const initialScreenerStocks = [
-  { ticker: "VALE3", name: "Vale S.A.", price: 65.42, pl: 4.5, roe: 22.1, divYield: 9.8, marketCap: 305.2, evEbitda: 3.2, debtEquity: 0.8, dlEbitda: 1.25, netMargin: 18.25, liquidity: 145000000, vpv: 1.45, lpa: 14.53, vpa: 45.11, growthRate: 12.0, sector: "Materiais", var12m: -6.45 },
-  { ticker: "PETR4", name: "Petrobras PN", price: 34.10, pl: 2.8, roe: 28.5, divYield: 12.4, marketCap: 450.1, evEbitda: 2.1, debtEquity: 0.7, dlEbitda: 0.72, netMargin: 22.10, liquidity: 350000000, vpv: 1.10, lpa: 12.17, vpa: 31.00, growthRate: 15.0, sector: "Materiais", var12m: 48.70 },
-  { ticker: "PETR3", name: "Petrobras ON", price: 36.80, pl: 3.0, roe: 28.5, divYield: 11.5, marketCap: 450.1, evEbitda: 2.2, debtEquity: 0.7, dlEbitda: 0.72, netMargin: 22.10, liquidity: 95000000, vpv: 1.18, lpa: 12.26, vpa: 31.18, growthRate: 14.0, sector: "Materiais", var12m: 45.20 },
-  { ticker: "ITUB4", name: "Itaú Unibanco PN", price: 28.95, pl: 8.2, roe: 18.9, divYield: 5.1, marketCap: 270.5, evEbitda: 5.8, debtEquity: 0.5, dlEbitda: 0.35, netMargin: 15.40, liquidity: 120000000, vpv: 1.83, lpa: 3.53, vpa: 15.82, growthRate: 8.0, sector: "Financeiro", var12m: 24.15 },
-  { ticker: "BBDC4", name: "Bradesco PN", price: 14.50, pl: 9.1, roe: 14.2, divYield: 6.3, marketCap: 145.8, evEbitda: 4.9, debtEquity: 0.6, dlEbitda: 0.40, netMargin: 12.50, liquidity: 65000000, vpv: 1.12, lpa: 1.59, vpa: 12.94, growthRate: 6.0, sector: "Financeiro", var12m: -10.80 },
-  { ticker: "BBDC3", name: "Bradesco ON", price: 12.90, pl: 8.1, roe: 14.2, divYield: 7.1, marketCap: 145.8, evEbitda: 4.5, debtEquity: 0.6, dlEbitda: 0.40, netMargin: 12.50, liquidity: 15000000, vpv: 1.00, lpa: 1.59, vpa: 12.90, growthRate: 5.5, sector: "Financeiro", var12m: -12.40 },
+  { ticker: "VALE3", name: "Vale S.A.", price: 61.20, pl: 4.21, roe: 22.1, divYield: 9.8, marketCap: 305.2, evEbitda: 3.2, debtEquity: 0.8, dlEbitda: 1.25, netMargin: 18.25, liquidity: 145000000, vpv: 1.35, lpa: 14.53, vpa: 45.11, growthRate: 12.0, sector: "Materiais", var12m: -6.45 },
+  { ticker: "PETR4", name: "Petrobras PN", price: 38.06, pl: 3.12, roe: 28.5, divYield: 12.4, marketCap: 450.1, evEbitda: 2.1, debtEquity: 0.7, dlEbitda: 0.72, netMargin: 22.10, liquidity: 350000000, vpv: 1.23, lpa: 12.17, vpa: 31.00, growthRate: 15.0, sector: "Materiais", var12m: 48.70 },
+  { ticker: "PETR3", name: "Petrobras ON", price: 40.80, pl: 3.32, roe: 28.5, divYield: 11.5, marketCap: 450.1, evEbitda: 2.2, debtEquity: 0.7, dlEbitda: 0.72, netMargin: 22.10, liquidity: 95000000, vpv: 1.31, lpa: 12.26, vpa: 31.18, growthRate: 14.0, sector: "Materiais", var12m: 45.20 },
+  { ticker: "ITUB4", name: "Itaú Unibanco PN", price: 33.50, pl: 9.49, roe: 18.9, divYield: 5.1, marketCap: 270.5, evEbitda: 5.8, debtEquity: 0.5, dlEbitda: 0.35, netMargin: 15.40, liquidity: 120000000, vpv: 2.12, lpa: 3.53, vpa: 15.82, growthRate: 8.0, sector: "Financeiro", var12m: 24.15 },
+  { ticker: "BBDC4", name: "Bradesco PN", price: 13.80, pl: 8.68, roe: 14.2, divYield: 6.3, marketCap: 145.8, evEbitda: 4.9, debtEquity: 0.6, dlEbitda: 0.40, netMargin: 12.50, liquidity: 65000000, vpv: 1.07, lpa: 1.59, vpa: 12.94, growthRate: 6.0, sector: "Financeiro", var12m: -10.80 },
+  { ticker: "BBDC3", name: "Bradesco ON", price: 12.30, pl: 7.74, roe: 14.2, divYield: 7.1, marketCap: 145.8, evEbitda: 4.5, debtEquity: 0.6, dlEbitda: 0.40, netMargin: 12.50, liquidity: 15000000, vpv: 0.95, lpa: 1.59, vpa: 12.90, growthRate: 5.5, sector: "Financeiro", var12m: -12.40 },
   { ticker: "BBAS3", name: "Banco do Brasil ON", price: 26.50, pl: 6.8, roe: 19.8, divYield: 7.5, marketCap: 118.2, evEbitda: 4.5, debtEquity: 0.4, dlEbitda: 0.22, netMargin: 16.80, liquidity: 95000000, vpv: 1.09, lpa: 3.88, vpa: 24.23, growthRate: 10.0, sector: "Financeiro", var12m: 29.40 },
-  { ticker: "WEGE3", name: "Weg ON", price: 40.00, pl: 22.5, roe: 21.2, divYield: 2.8, marketCap: 84.0, evEbitda: 14.3, debtEquity: 0.2, dlEbitda: -0.15, netMargin: 16.20, liquidity: 45000000, vpv: 4.10, lpa: 1.77, vpa: 9.75, growthRate: 18.0, sector: "Materiais", var12m: 15.60 },
-  { ticker: "ABEV3", name: "Ambev S.A.", price: 13.05, pl: 12.8, roe: 15.6, divYield: 6.8, marketCap: 205.5, evEbitda: 8.1, debtEquity: 0.1, dlEbitda: -0.85, netMargin: 18.50, liquidity: 85000000, vpv: 2.45, lpa: 1.01, vpa: 5.32, growthRate: 7.0, sector: "Consumo Cíclico", var12m: -4.10 },
-  { ticker: "ITSA4", name: "Itaúsa PN", price: 9.85, pl: 6.9, roe: 17.5, divYield: 6.5, marketCap: 98.4, evEbitda: 5.2, debtEquity: 0.3, dlEbitda: 0.15, netMargin: 14.20, liquidity: 55000000, vpv: 1.25, lpa: 1.42, vpa: 7.88, growthRate: 7.5, sector: "Financeiro", var12m: 11.20 },
+  { ticker: "WEGE3", name: "Weg ON", price: 48.50, pl: 27.40, roe: 21.2, divYield: 2.8, marketCap: 84.0, evEbitda: 14.3, debtEquity: 0.2, dlEbitda: -0.15, netMargin: 16.20, liquidity: 45000000, vpv: 4.97, lpa: 1.77, vpa: 9.75, growthRate: 18.0, sector: "Materiais", var12m: 15.60 },
+  { ticker: "ABEV3", name: "Ambev S.A.", price: 12.20, pl: 12.08, roe: 15.6, divYield: 6.8, marketCap: 205.5, evEbitda: 8.1, debtEquity: 0.1, dlEbitda: -0.85, netMargin: 18.50, liquidity: 85000000, vpv: 2.29, lpa: 1.01, vpa: 5.32, growthRate: 7.0, sector: "Consumo Cíclico", var12m: -4.10 },
+  { ticker: "ITSA4", name: "Itaúsa PN", price: 10.15, pl: 7.15, roe: 17.5, divYield: 6.5, marketCap: 98.4, evEbitda: 5.2, debtEquity: 0.3, dlEbitda: 0.15, netMargin: 14.20, liquidity: 55000000, vpv: 1.29, lpa: 1.42, vpa: 7.88, growthRate: 7.5, sector: "Financeiro", var12m: 11.20 },
   { ticker: "JBSS3", name: "JBS ON", price: 22.15, pl: 7.4, roe: 16.0, divYield: 5.5, marketCap: 49.3, evEbitda: 4.1, debtEquity: 1.1, dlEbitda: 1.95, netMargin: 4.50, liquidity: 35000000, vpv: 1.25, lpa: 2.99, vpa: 17.72, growthRate: 5.0, sector: "Consumo Cíclico", var12m: 38.20 },
   { ticker: "SUZB3", name: "Suzano ON", price: 54.20, pl: 8.5, roe: 18.2, divYield: 4.5, marketCap: 72.8, evEbitda: 6.2, debtEquity: 1.5, dlEbitda: 2.80, netMargin: 14.50, liquidity: 42000000, vpv: 1.80, lpa: 6.37, vpa: 30.11, growthRate: 8.0, sector: "Materiais", var12m: 12.30 },
   { ticker: "GGBR4", name: "Gerdau PN", price: 21.50, pl: 5.8, roe: 13.5, divYield: 8.2, marketCap: 38.5, evEbitda: 3.5, debtEquity: 0.4, dlEbitda: 0.85, netMargin: 10.20, liquidity: 38000000, vpv: 0.88, lpa: 3.70, vpa: 24.43, growthRate: 5.0, sector: "Materiais", var12m: -5.20 },
