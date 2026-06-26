@@ -749,30 +749,52 @@ export default function App() {
         setDcfSharesExTreasury(exTreasury);
         setDcf2026Profit(null); // Resetar premissa de lucro de 2026
 
-        // ROE coerente
-        setDcfRoe(stock.roe || 15.0);
+        // ROE coerente com duas casas decimais
+        const initialRoe = parseFloat((stock.roe || 15).toFixed(2));
+        setDcfRoe(initialRoe);
 
-        // Payout coerente derivado
+        // Payout coerente derivado com duas casas decimais
         const divPerShare = (stock.price * stock.divYield) / 100;
         const lpa = stock.lpa || 3.38;
         const payout = lpa > 0 ? Math.min(100, Math.max(10, (divPerShare / lpa) * 100)) : 60;
-        setDcfPayout(parseFloat(payout.toFixed(2)));
+        const initialPayout = parseFloat(payout.toFixed(2));
+        setDcfPayout(initialPayout);
 
-        // Taxa de crescimento
-        const gRate = stock.growthRate || 5.22;
-        setDcfGrowthRate(gRate);
+        // Taxa de crescimento reativa (g = ROE * (1 - Payout / 100)) com duas casas decimais
+        const calculatedGrowth = parseFloat((initialRoe * (1 - initialPayout / 100)).toFixed(2));
+        const finalGrowth = calculatedGrowth > 0 ? calculatedGrowth : parseFloat((stock.growthRate || 5).toFixed(2));
+        setDcfGrowthRate(finalGrowth);
 
-        // Inicializar os crescimentos dos anos seguintes na tabela com a taxa de crescimento da ação
+        // Inicializar os crescimentos dos anos seguintes na tabela com a taxa de crescimento decimal
         setDcfProjectedGrowths({
-          2026: gRate,
-          2027: gRate,
-          2028: gRate,
-          2029: gRate,
-          2030: gRate
+          2026: finalGrowth,
+          2027: finalGrowth,
+          2028: finalGrowth,
+          2029: finalGrowth,
+          2030: finalGrowth
         });
       }
     }
   }, [valuationParams.ticker, screenerStocks]);
+
+  // Efeito reativo para recalcular a taxa de crescimento esperada quando o analista altera o Payout ou o ROE (g = ROE * (1 - Payout/100))
+  // Mantemos com duas casas decimais para maior precisão
+  useEffect(() => {
+    const isFii = valuationParams.ticker.endsWith("11");
+    if (!isFii) {
+      const calculatedGrowth = dcfRoe * (1 - dcfPayout / 100);
+      // Garante uma taxa de crescimento razoável
+      const finalGrowth = parseFloat(Math.max(0, calculatedGrowth).toFixed(2));
+      setDcfGrowthRate(finalGrowth);
+      setDcfProjectedGrowths({
+        2026: finalGrowth,
+        2027: finalGrowth,
+        2028: finalGrowth,
+        2029: finalGrowth,
+        2030: finalGrowth
+      });
+    }
+  }, [dcfPayout, dcfRoe]);
 
   const [dcfPerpCrescimento, setDcfPerpCrescimento] = useState(3.0);
 
@@ -2557,7 +2579,10 @@ export default function App() {
                             type="number"
                             step="0.01"
                             value={dcfPayout}
-                            onChange={(e) => setDcfPayout(parseFloat(e.target.value) || 0)}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(",", ".");
+                              setDcfPayout(parseFloat(val) || 0);
+                            }}
                             className="bg-black/80 border border-white/10 rounded px-2 py-1 text-xs text-white text-right w-20 focus:border-orange-500 outline-none font-mono"
                           />
                           <span className="text-[11px] text-slate-500 font-mono">%</span>
@@ -2572,7 +2597,10 @@ export default function App() {
                             type="number"
                             step="0.01"
                             value={dcfRoe}
-                            onChange={(e) => setDcfRoe(parseFloat(e.target.value) || 0)}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(",", ".");
+                              setDcfRoe(parseFloat(val) || 0);
+                            }}
                             className="bg-black/80 border border-white/10 rounded px-2 py-1 text-xs text-white text-right w-20 focus:border-orange-500 outline-none font-mono"
                           />
                           <span className="text-[11px] text-slate-500 font-mono">%</span>
@@ -2588,7 +2616,8 @@ export default function App() {
                             step="0.01"
                             value={dcfGrowthRate}
                             onChange={(e) => {
-                              const newRate = parseFloat(e.target.value) || 0;
+                              const val = e.target.value.replace(",", ".");
+                              const newRate = parseFloat(val) || 0;
                               setDcfGrowthRate(newRate);
                               setDcfProjectedGrowths({
                                 2026: newRate,
@@ -2620,7 +2649,10 @@ export default function App() {
                             type="number"
                             step="0.01"
                             value={dcfDiscountRate}
-                            onChange={(e) => setDcfDiscountRate(parseFloat(e.target.value) || 0)}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(",", ".");
+                              setDcfDiscountRate(parseFloat(val) || 0);
+                            }}
                             className="bg-black/80 border border-white/10 rounded px-2 py-1 text-xs text-white text-right w-20 focus:border-orange-500 outline-none font-mono"
                           />
                           <span className="text-[11px] text-slate-500 font-mono">%</span>
@@ -2639,18 +2671,18 @@ export default function App() {
                     const stock = screenerStocks.find(s => s.ticker === valuationParams.ticker) ||
                                   importedScreenerStocks.find(s => s.ticker === valuationParams.ticker);
                     const currentLpa = stock ? stock.lpa || 3.38 : 3.38;
-                    const base2025Profit = Math.round(currentLpa * dcfTotalShares);
+                    const base2025Profit = currentLpa * dcfTotalShares;
 
                     // Lucros históricos retro-indexados matematicamente baseados na DPA/LPA real da ação selecionada
                     const hist2025 = base2025Profit;
-                    const hist2024 = Math.round(hist2025 / (1 + -31.18 / 100));
-                    const hist2023 = Math.round(hist2024 / (1 + 23.45 / 100));
-                    const hist2022 = Math.round(hist2023 / (1 + 40.85 / 100));
-                    const hist2021 = Math.round(hist2022 / (1 + 9.10 / 100));
+                    const hist2024 = hist2025 / (1 + -31.18 / 100);
+                    const hist2023 = hist2024 / (1 + 23.45 / 100);
+                    const hist2022 = hist2023 / (1 + 40.85 / 100);
+                    const hist2021 = hist2022 / (1 + 9.10 / 100);
 
                     // Lucros projetados calculados dinamicamente com base nas premissas de crescimento do analista por ano
                     const computedProjectedProfits: Record<number, number> = {};
-                    const active2026Profit = dcf2026Profit !== null ? dcf2026Profit : Math.round(base2025Profit * (1 + (dcfProjectedGrowths[2026] ?? dcfGrowthRate) / 100));
+                    const active2026Profit = dcf2026Profit !== null ? dcf2026Profit : base2025Profit * (1 + (dcfProjectedGrowths[2026] ?? dcfGrowthRate) / 100);
                     computedProjectedProfits[2026] = active2026Profit;
 
                     let currentProfit = active2026Profit;
@@ -2658,7 +2690,7 @@ export default function App() {
                     remainingProjYears.forEach(year => {
                       const growth = dcfProjectedGrowths[year] ?? dcfGrowthRate;
                       currentProfit = currentProfit * (1 + growth / 100);
-                      computedProjectedProfits[year] = Math.round(currentProfit);
+                      computedProjectedProfits[year] = currentProfit;
                     });
 
                     const vps: Record<number, number> = {};
@@ -2749,13 +2781,15 @@ export default function App() {
                                 if (!isFii) {
                                   const stock = screenerStocks.find(s => s.ticker === valuationParams.ticker) ||
                                                 importedScreenerStocks.find(s => s.ticker === valuationParams.ticker);
-                                  const gRate = stock ? stock.growthRate || 5.22 : 5.22;
-                                  setDcfPayout(stock ? parseFloat(((stock.price * stock.divYield / 100) / (stock.lpa || 3.38) * 100).toFixed(2)) : 68.84);
-                                  setDcfRoe(stock ? stock.roe || 16.75 : 16.75);
+                                  const rawPayout = stock ? ((stock.price * stock.divYield / 100) / (stock.lpa || 3.38) * 100) : 68.84;
+                                  const rawRoe = stock ? stock.roe || 16.75 : 16.75;
+                                  const gRate = Math.round(stock ? stock.growthRate || 5.22 : 5.22);
+                                  setDcfPayout(Math.round(rawPayout));
+                                  setDcfRoe(Math.round(rawRoe));
                                   setDcfGrowthRate(gRate);
-                                  setDcfDiscountRate(14.50);
+                                  setDcfDiscountRate(14);
                                   setDcfProjectionYears(3);
-                                  setDcfPerpCrescimento(3.0);
+                                  setDcfPerpCrescimento(3);
                                   setDcfProjectedGrowths({
                                     2026: gRate,
                                     2027: gRate,
@@ -2799,13 +2833,13 @@ export default function App() {
                   </div>
 
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs font-mono">
+                    <table className="w-full table-fixed text-left text-xs font-mono min-w-[700px]">
                       <thead>
                         <tr className="border-b border-white/10 text-slate-500 uppercase tracking-wider text-[10px] font-mono">
-                          <th className="pb-2 text-center w-14">Ano</th>
-                          <th className="pb-2 text-right">Lucro Líquido</th>
-                          <th className="pb-2 text-right">Crescimento</th>
-                          <th className="pb-2 text-right">VPL</th>
+                          <th className="pb-2 text-center w-[15%]">Ano</th>
+                          <th className="pb-2 text-right w-[45%]">Lucro Líquido</th>
+                          <th className="pb-2 text-right w-[20%]">Crescimento</th>
+                          <th className="pb-2 text-right w-[20%]">VPL</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5 text-slate-300 font-mono">
@@ -2815,13 +2849,13 @@ export default function App() {
                           const stock = screenerStocks.find(s => s.ticker === valuationParams.ticker) ||
                                         importedScreenerStocks.find(s => s.ticker === valuationParams.ticker);
                           const currentLpa = stock ? stock.lpa || 3.38 : 3.38;
-                          const base2025Profit = Math.round(currentLpa * dcfTotalShares);
+                          const base2025Profit = currentLpa * dcfTotalShares;
 
                           const hist2025 = base2025Profit;
-                          const hist2024 = Math.round(hist2025 / (1 + -31.18 / 100));
-                          const hist2023 = Math.round(hist2024 / (1 + 23.45 / 100));
-                          const hist2022 = Math.round(hist2023 / (1 + 40.85 / 100));
-                          const hist2021 = Math.round(hist2022 / (1 + 9.10 / 100));
+                          const hist2024 = hist2025 / (1 + -31.18 / 100);
+                          const hist2023 = hist2024 / (1 + 23.45 / 100);
+                          const hist2022 = hist2023 / (1 + 40.85 / 100);
+                          const hist2021 = hist2022 / (1 + 9.10 / 100);
 
                           return [
                             { yr: "2021", val: hist2021, pctStr: "30,98%" },
@@ -2852,10 +2886,10 @@ export default function App() {
                           const stock = screenerStocks.find(s => s.ticker === valuationParams.ticker) ||
                                         importedScreenerStocks.find(s => s.ticker === valuationParams.ticker);
                           const currentLpa = stock ? stock.lpa || 3.38 : 3.38;
-                          const base2025Profit = Math.round(currentLpa * dcfTotalShares);
+                          const base2025Profit = currentLpa * dcfTotalShares;
 
                           const computedProjectedProfits: Record<number, number> = {};
-                          const active2026Profit = dcf2026Profit !== null ? dcf2026Profit : Math.round(base2025Profit * (1 + (dcfProjectedGrowths[2026] ?? dcfGrowthRate) / 100));
+                          const active2026Profit = dcf2026Profit !== null ? dcf2026Profit : base2025Profit * (1 + (dcfProjectedGrowths[2026] ?? dcfGrowthRate) / 100);
                           computedProjectedProfits[2026] = active2026Profit;
 
                           let currentProfit = active2026Profit;
@@ -2863,7 +2897,7 @@ export default function App() {
                           remainingProjYears.forEach(year => {
                             const growth = dcfProjectedGrowths[year] ?? dcfGrowthRate;
                             currentProfit = currentProfit * (1 + growth / 100);
-                            computedProjectedProfits[year] = Math.round(currentProfit);
+                            computedProjectedProfits[year] = currentProfit;
                           });
 
                           return (
@@ -2871,7 +2905,7 @@ export default function App() {
                               {years.map((y, idx) => {
                                 const value = computedProjectedProfits[y] || 0;
                                 const growthPct = y === 2026
-                                  ? ((value - base2025Profit) / base2025Profit) * 100
+                                  ? (((value - base2025Profit) / base2025Profit) * 100)
                                   : (dcfProjectedGrowths[y] ?? dcfGrowthRate);
 
                                 const discountFactor = Math.pow(1 + dcfDiscountRate / 100, idx + 1);
@@ -2886,11 +2920,18 @@ export default function App() {
                                           <span className="text-[10px] text-slate-500 font-mono">R$</span>
                                           <input
                                             type="number"
-                                            value={value}
+                                            step="0.01"
+                                            value={dcf2026Profit === null ? "" : dcf2026Profit}
                                             onChange={(e) => {
-                                              const numVal = parseInt(e.target.value) || 0;
-                                              setDcf2026Profit(numVal);
+                                              const rawVal = e.target.value;
+                                              if (rawVal === "") {
+                                                setDcf2026Profit(null);
+                                              } else {
+                                                const sanitized = rawVal.replace(",", ".");
+                                                setDcf2026Profit(parseFloat(sanitized) || 0);
+                                              }
                                             }}
+                                            placeholder={(base2025Profit * (1 + (dcfProjectedGrowths[2026] ?? dcfGrowthRate) / 100)).toFixed(2)}
                                             className="bg-black/60 border border-white/10 rounded px-2 py-1 text-xs text-emerald-400 text-right w-36 focus:border-orange-500 outline-none font-bold font-mono"
                                           />
                                         </div>
@@ -2901,16 +2942,17 @@ export default function App() {
                                     <td className="py-2 text-right font-mono">
                                       {y === 2026 ? (
                                         <span className="text-slate-400 text-xs font-bold font-mono">
-                                          {growthPct >= 0 ? "+" : ""}{growthPct.toFixed(2)}%
+                                          {growthPct >= 0 ? "+" : ""}{growthPct.toFixed(2).replace(".", ",")}%
                                         </span>
                                       ) : (
                                         <div className="inline-flex items-center gap-1.5 w-full justify-end font-mono">
                                           <input
                                             type="number"
                                             step="0.01"
-                                            value={growthPct}
+                                            value={parseFloat(growthPct.toFixed(2))}
                                             onChange={(e) => {
-                                              const numVal = parseFloat(e.target.value) || 0;
+                                              const rawVal = e.target.value.replace(",", ".");
+                                              const numVal = parseFloat(rawVal) || 0;
                                               setDcfProjectedGrowths(prev => ({
                                                 ...prev,
                                                 [y]: numVal
