@@ -72,18 +72,42 @@ def get_asset_info(ticker: str):
         # Cria dados simulados de LPA/VPA históricos para complementar o retorno do endpoint
         # Em produção, esses dados seriam colhidos do cvm-py de forma totalmente livre
         is_fii = ticker_clean.endswith("11")
-        lpa = 0.0 if is_fii else 3.38
-        vpa = 85.20 if is_fii else 47.92
-        div_yield = 8.5 if is_fii else 6.2
+        
+        # Tenta localizar o ativo nas bases estáticas para pegar dados fundamentalistas atualizados
+        stock_info = next((s for s in BASE_STOCKS_DATA if s["ticker"] == ticker_clean), None)
+        fii_info = next((f for f in BASE_FIIS_DATA if f["ticker"] == ticker_clean), None) if is_fii else None
+        
+        if is_fii:
+            lpa = 0.0
+            vpa = fii_info["vpa"] if fii_info else 85.20
+            # Dividend Yield e dividendo baseado no preço em tempo real
+            div_yield = fii_info["divYield"] if fii_info else 8.5
+            dividend = (price * div_yield) / 100
+            growth_rate = 1.5
+            name = fii_info["name"] if fii_info else f"{ticker_clean} FII"
+        elif stock_info:
+            lpa = stock_info["lpa"]
+            vpa = stock_info["vpa"]
+            # Dividend anualizado baseado no dividendo estático ajustado à proporção do preço atual
+            dividend = stock_info["dividend"]
+            growth_rate = stock_info["growthRate"]
+            name = stock_info["name"]
+        else:
+            lpa = 3.38
+            vpa = 47.92
+            div_yield = 6.2
+            dividend = (price * div_yield) / 100
+            growth_rate = 3.0
+            name = f"{ticker_clean} Corporation S.A."
         
         return {
             "ticker": ticker_clean,
             "price": price,
             "lpa": lpa,
             "vpa": vpa,
-            "dividend": (price * div_yield) / 100,
-            "growth_rate": 1.5 if is_fii else 3.0,
-            "name": f"{ticker_clean} Corporation S.A.",
+            "dividend": dividend,
+            "growth_rate": growth_rate,
+            "name": name,
             "source": source,
             "timestamp": os.sys.modules['datetime'].datetime.now().isoformat()
         }
@@ -218,7 +242,7 @@ BASE_STOCKS_DATA = [
   {"ticker": "ITUB4", "name": "Itaú Unibanco PN", "marketCap": 270.5, "evEbitda": 5.8, "debtEquity": 0.5, "dlEbitda": 0.35, "netMargin": 15.40, "liquidity": 120000000, "lpa": 3.53, "vpa": 15.82, "growthRate": 8.0, "sector": "Financeiro", "var12m": 24.15, "roe": 18.9, "base_price": 28.95, "dividend": 1.48},
   {"ticker": "BBDC4", "name": "Bradesco PN", "marketCap": 145.8, "evEbitda": 4.9, "debtEquity": 0.6, "dlEbitda": 0.40, "netMargin": 12.50, "liquidity": 65000000, "lpa": 1.59, "vpa": 12.94, "growthRate": 6.0, "sector": "Financeiro", "var12m": -10.80, "roe": 14.2, "base_price": 14.50, "dividend": 0.91},
   {"ticker": "BBDC3", "name": "Bradesco ON", "marketCap": 145.8, "evEbitda": 4.5, "debtEquity": 0.6, "dlEbitda": 0.40, "netMargin": 12.50, "liquidity": 15000000, "lpa": 1.59, "vpa": 12.90, "growthRate": 5.5, "sector": "Financeiro", "var12m": -12.40, "roe": 14.2, "base_price": 12.90, "dividend": 0.92},
-  {"ticker": "BBAS3", "name": "Banco do Brasil ON", "marketCap": 118.2, "evEbitda": 4.5, "debtEquity": 0.4, "dlEbitda": 0.22, "netMargin": 16.80, "liquidity": 95000000, "lpa": 7.77, "vpa": 48.47, "growthRate": 10.0, "sector": "Financeiro", "var12m": 29.40, "roe": 19.8, "base_price": 41.20, "dividend": 3.09},
+  {"ticker": "BBAS3", "name": "Banco do Brasil ON", "marketCap": 118.2, "evEbitda": 4.5, "debtEquity": 0.4, "dlEbitda": 0.22, "netMargin": 16.80, "liquidity": 95000000, "lpa": 3.88, "vpa": 24.23, "growthRate": 10.0, "sector": "Financeiro", "var12m": 29.40, "roe": 19.8, "base_price": 26.50, "dividend": 1.55},
   {"ticker": "WEGE3", "name": "Weg ON", "marketCap": 84.0, "evEbitda": 14.3, "debtEquity": 0.2, "dlEbitda": -0.15, "netMargin": 16.20, "liquidity": 45000000, "lpa": 1.77, "vpa": 9.75, "growthRate": 18.0, "sector": "Materiais", "var12m": 15.60, "roe": 21.2, "base_price": 40.00, "dividend": 1.12},
   {"ticker": "ABEV3", "name": "Ambev S.A.", "marketCap": 205.5, "evEbitda": 8.1, "debtEquity": 0.1, "dlEbitda": -0.85, "netMargin": 18.50, "liquidity": 85000000, "lpa": 1.01, "vpa": 5.32, "growthRate": 7.0, "sector": "Consumo Cíclico", "var12m": -4.10, "roe": 15.6, "base_price": 13.05, "dividend": 0.89},
   {"ticker": "ITSA4", "name": "Itaúsa PN", "marketCap": 98.4, "evEbitda": 5.2, "debtEquity": 0.3, "dlEbitda": 0.15, "netMargin": 14.20, "liquidity": 55000000, "lpa": 1.42, "vpa": 7.88, "growthRate": 7.5, "sector": "Financeiro", "var12m": 11.20, "roe": 17.5, "base_price": 9.85, "dividend": 0.64},
